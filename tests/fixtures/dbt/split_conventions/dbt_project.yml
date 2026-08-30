@@ -1,0 +1,4 @@
+name: split_conventions
+version: '1.0'
+config-version: 2
+model-paths: [models]

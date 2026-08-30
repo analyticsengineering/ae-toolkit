@@ -1,0 +1,17 @@
+{
+  "jobs": [
+    {
+      "id": 4012345,
+      "title": "Analytics Engineer",
+      "updated_at": "2026-08-01T12:00:00Z"
+    },
+    {
+      "id": 4012346,
+      "title": "Data Engineer",
+      "updated_at": "2026-08-02T12:00:00Z"
+    }
+  ],
+  "meta": {
+    "total": 2
+  }
+}

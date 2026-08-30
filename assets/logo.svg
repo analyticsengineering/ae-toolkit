@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Analytics Engineering Toolkit</title>
+  <desc id="desc">Three data layers connected by an analytics line</desc>
+  <rect width="256" height="256" rx="48" fill="#111827"/>
+  <path d="M48 72c0-11 36-20 80-20s80 9 80 20-36 20-80 20-80-9-80-20Z" fill="#2DD4BF"/>
+  <path d="M48 72v44c0 11 36 20 80 20s80-9 80-20V72c-13 12-48 18-80 18s-67-6-80-18Z" fill="#14B8A6" opacity=".82"/>
+  <path d="M48 116v44c0 11 36 20 80 20s80-9 80-20v-44c-13 12-48 18-80 18s-67-6-80-18Z" fill="#0F766E" opacity=".92"/>
+  <path d="M48 160v24c0 11 36 20 80 20s80-9 80-20v-24c-13 12-48 18-80 18s-67-6-80-18Z" fill="#115E59"/>
+  <path d="m78 160 28-25 24 12 45-47" fill="none" stroke="#F8FAFC" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="78" cy="160" r="7" fill="#F8FAFC"/>
+  <circle cx="106" cy="135" r="7" fill="#F8FAFC"/>
+  <circle cx="130" cy="147" r="7" fill="#F8FAFC"/>
+  <circle cx="175" cy="100" r="7" fill="#F8FAFC"/>
+</svg>

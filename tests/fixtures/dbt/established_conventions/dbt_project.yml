@@ -1,0 +1,10 @@
+name: established_conventions
+version: '1.0'
+config-version: 2
+model-paths: [models]
+models:
+  established_conventions:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# dbt writes these into any project it runs against, including the fixtures and
+# scenario inputs used for testing. Committing them would let a downloaded package
+# masquerade as a team's own code, which is precisely what the convention
+# inference is built to ignore.
+#
+# Some scenarios do commit a fake vendored package on purpose, to prove the
+# inference excludes it. Those files are already tracked and so are unaffected;
+# a new one needs `git add -f`.
+**/dbt_packages/
+**/logs/
+**/package-lock.yml
+**/.user.yml

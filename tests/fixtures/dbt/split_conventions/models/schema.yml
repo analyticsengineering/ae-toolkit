@@ -1,0 +1,30 @@
+version: 2
+models:
+  - name: stg_orders
+    description: Cleaned orders.
+    columns:
+      - name: order_id
+        description: Stable identifier for an order.
+        data_tests:
+          - unique
+          - not_null
+  - name: stg_customers
+    description: Cleaned customers.
+    columns:
+      - name: customer_id
+        description: Stable identifier for a customer.
+        data_tests:
+          - unique
+          - not_null
+  - name: staging_products
+    columns:
+      - name: product_id
+        tests:
+          - unique
+          - not_null
+  - name: staging_payments
+    columns:
+      - name: payment_id
+        tests:
+          - unique
+          - not_null

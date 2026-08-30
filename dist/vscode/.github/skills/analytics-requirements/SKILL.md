@@ -1,0 +1,100 @@
+---
+name: analytics-requirements
+description: Translates business questions into testable analytics requirements, metric specifications, acceptance criteria, and implementation-ready contracts. Use before writing SQL when a request, dashboard, KPI, or analysis is ambiguous.
+---
+
+# Analytics Requirements
+
+Convert intent into an agreed analytical contract. Refuse ambiguity-to-SQL: do not implement a query while material definitions remain unresolved.
+
+## When to use
+
+- Clarify dashboard, KPI, report, experiment, segmentation, data product, or ad hoc analysis requests.
+- Translate stakeholder language into grains, populations, measures, dimensions, time rules, and acceptance tests.
+- Use when different reasonable SQL implementations could answer different questions.
+
+## Required context
+
+Obtain:
+
+- Requester, decision to be made, audience, delivery format, cadence, freshness, and deadline.
+- Business terms, metric intent, population, exclusions, dimensions, comparison periods, and history needs.
+- Known data sources, owners, privacy constraints, and existing canonical definitions.
+- Operating mode: **Work**, **Learn**, or **Assessment**.
+
+In Work mode, drive toward an approvable contract. In Learn mode, explain why each requirement prevents analytical ambiguity. In Assessment mode, evaluate the learner's submitted specification without filling in missing answers.
+
+## Inspection procedure
+
+1. Restate the business decision and how the result will change an action.
+2. Identify users, decision frequency, tolerance for latency/error, and required drill paths.
+3. Decompose every metric into business event, entity, output grain, population, numerator, denominator, aggregation, dimensions, and time semantics.
+4. Define inclusion/exclusion rules, status handling, null/unknown behavior, deduplication, identity, currency/unit, time zone, and period boundaries.
+5. Define historical semantics: event time versus processing time, late data, corrections, restatement, and “as of” expectations.
+6. Map requirements to candidate sources and owners, but label feasibility assumptions.
+7. Write examples and counterexamples, including boundary cases.
+8. Convert requirements into acceptance criteria and reconciliation expectations.
+9. Create a decision log of resolved choices and open questions.
+10. Stop before SQL when any material ambiguity can alter grain, population, metric value, or privacy posture.
+
+Read-only discovery is allowed. Contacting connected catalogs, ticketing systems, warehouses, or stakeholders, and creating/updating artifacts outside the response, require an explicit user trigger; writes require approval.
+
+## Decision framework
+
+A requirement is implementation-ready only when:
+
+- The decision and consumer are named.
+- Output grain and entity identity are unambiguous.
+- Every metric has formula, population, dimensions, and time semantics.
+- Boundary, null, duplicate, late-data, and correction behavior are specified.
+- Source feasibility and ownership are known or isolated as approved assumptions.
+- Acceptance criteria are testable.
+- Privacy/access constraints are explicit.
+
+Classify unresolved items:
+
+- **Blocking ambiguity** — multiple valid interpretations materially change output; refuse SQL.
+- **Approved assumption** — stakeholder explicitly accepts a provisional choice and impact.
+- **Non-blocking detail** — does not alter semantic correctness; document it.
+
+## Failure modes
+
+- Turning a vague noun such as “active,” “customer,” or “revenue” directly into SQL.
+- Asking which table to use before defining the business event and grain.
+- Mistaking dashboard layout for analytical requirements.
+- Omitting denominator, exclusions, time zone, or restatement policy.
+- Hiding decisions in implementation details rather than recording them.
+- Treating silence as approval.
+
+## Evidence required
+
+Record the source of each definition: stakeholder statement, canonical metric, policy, source-system contract, or explicit assumption. For every blocking ambiguity, provide at least two plausible interpretations and explain how results differ. Acceptance criteria must include input/scenario and expected outcome, not “looks correct.”
+
+## Output contract
+
+Return `# Analytics Requirements` with: Business question; Decision being supported; Metric definition; Numerator; Denominator; Grain; Dimensions; Required sources; Attribution assumptions; Time-window assumptions; Edge cases; Data quality requirements; Potential marts; Acceptance criteria; Questions that MUST be answered before implementation.
+
+Also state readiness as `READY`, `READY WITH APPROVED ASSUMPTIONS`, or `NOT READY FOR SQL`. When not ready, do not append speculative SQL.
+
+The final section holds only questions whose answers change the implementation and that neither the request nor the repository already answers. When the brief is genuinely complete, say so instead of manufacturing a question to fill the heading.
+
+Optimize for stakeholder scanability: state the blocking decisions once near the top, keep one compact metric contract, and cross-reference rather than repeat the same ambiguity in assumptions, edge cases, acceptance criteria, and final questions. Separate requirements needed for correctness from optional governance or future design ideas. Do not present inferred source grain as observed fact.
+
+## Verification
+
+- Walk each metric through one concrete normal case and boundary case.
+- Ask whether two competent analysts could implement materially different answers; if yes, identify the missing decision.
+- Trace every acceptance criterion to a requirement.
+- Confirm units, time zone, grain, population, and privacy constraints.
+- Obtain explicit acceptance before invoking connected implementation functionality.
+
+## Safety/privacy
+
+- Minimize requested personal or sensitive attributes.
+- Identify access, retention, aggregation, and small-cell constraints before implementation.
+- Do not query systems or share stakeholder-sensitive material without explicit instruction.
+- Record assumptions without fabricating stakeholder approval.
+
+## What not to assume
+
+Do not assume shared definitions, a canonical source, stable identity, default time zones, obvious exclusions, dashboard filters, acceptable latency, historical restatement, unrestricted access, or that the requester wants SQL rather than a decision.

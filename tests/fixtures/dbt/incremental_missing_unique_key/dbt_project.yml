@@ -1,0 +1,4 @@
+name: incremental_missing_unique_key
+version: '1.0'
+config-version: 2
+model-paths: [models]

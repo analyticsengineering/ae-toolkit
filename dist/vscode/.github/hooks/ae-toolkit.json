@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "python3 .github/ae-toolkit/hooks/safety_gate.py --host vscode",
+        "timeoutSec": 10
+      },
+      {
+        "type": "command",
+        "command": "python3 .github/ae-toolkit/hooks/cloud_data_gate.py --host vscode",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

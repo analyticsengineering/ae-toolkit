@@ -1,0 +1,12 @@
+name: nordic_sales
+version: 1.0.0
+profile: nordic_sales
+
+models:
+  nordic_sales:
+    staging:
+      +materialized: view
+      +transient: true
+    marts:
+      +materialized: table
+      +snowflake_warehouse: TRANSFORM_WH

@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.0",
+    "generated_at": "2026-01-01T00:00:00Z"
+  },
+  "nodes": {
+    "model.clean_project.stg_orders": {
+      "resource_type": "model",
+      "name": "stg_orders",
+      "language": "sql",
+      "config": {"materialized": "view"}
+    },
+    "model.clean_project.fct_orders": {
+      "resource_type": "model",
+      "name": "fct_orders",
+      "language": "sql",
+      "config": {"materialized": "table"}
+    }
+  },
+  "sources": {
+    "source.clean_project.app.orders": {
+      "resource_type": "source",
+      "name": "orders",
+      "source_name": "app",
+      "description": "One row per order."
+    }
+  },
+  "macros": {},
+  "exposures": {},
+  "metrics": {}
+}

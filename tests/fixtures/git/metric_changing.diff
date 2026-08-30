@@ -1,0 +1,10 @@
+diff --git a/models/marts/fct_orders.sql b/models/marts/fct_orders.sql
+index 1111111..2222222 100644
+--- a/models/marts/fct_orders.sql
++++ b/models/marts/fct_orders.sql
+@@ -3,5 +3,5 @@ select
+     customer_id,
+-    sum(order_amount) as revenue
++    sum(order_amount) - sum(discount_amount) as revenue
+ from orders
+ group by customer_id

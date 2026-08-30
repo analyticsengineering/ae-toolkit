@@ -1,0 +1,349 @@
+from __future__ import annotations
+
+import ast
+import json
+import socket
+import unittest
+from pathlib import Path
+from unittest import mock
+from urllib.parse import urlparse
+
+from test_support import PLUGIN_ROOT, parse_frontmatter, read_json, load_module
+
+
+EXPECTED_COMMANDS = {
+    "ae-api-plan",
+    "ae-build-model",
+    "ae-capstone-check",
+    "ae-dbt-health",
+    "ae-debug",
+    "ae-diagnostic",
+    "ae-explain",
+    "ae-grade",
+    "ae-hint",
+    "ae-learn",
+    "ae-pr-review",
+    "ae-profile-data",
+    "ae-requirements",
+    "ae-review-model",
+    "ae-review-sql",
+    "ae-trace",
+}
+FREE_COMMANDS = {
+    "ae-review-sql",
+    "ae-profile-data",
+    "ae-review-model",
+    "ae-dbt-health",
+    "ae-requirements",
+    "ae-explain",
+    "ae-learn",
+    "ae-build-model",
+    "ae-trace",
+}
+EXPECTED_SKILLS = {
+    "analytics-requirements",
+    "api-pipeline",
+    "build-model",
+    "data-model-review",
+    "data-profile",
+    "data-quality-investigation",
+    "dbt-health",
+    "explain-data-code",
+    "pr-review",
+    "project-profile",
+    "sql-review",
+    "trace-lineage",
+}
+EXPECTED_AGENTS = {
+    "data-quality-investigator",
+    "learning-coach",
+    "pipeline-architect",
+    "senior-ae-reviewer",
+}
+
+
+class PluginManifestTests(unittest.TestCase):
+    def test_plugin_manifest_declares_every_discovery_path(self) -> None:
+        manifest = read_json(PLUGIN_ROOT / ".cursor-plugin" / "plugin.json")
+        self.assertEqual(manifest["name"], "analytics-engineering-toolkit")
+        self.assertEqual(
+            {
+                key: manifest[key]
+                for key in ("rules", "skills", "agents", "commands", "hooks", "mcpServers")
+            },
+            {
+                "rules": "rules/",
+                "skills": "skills/",
+                "agents": "agents/",
+                "commands": "commands/",
+                "hooks": "hooks/hooks.json",
+                "mcpServers": "mcp.json",
+            },
+        )
+        for key in ("rules", "skills", "agents", "commands"):
+            self.assertTrue((PLUGIN_ROOT / manifest[key]).is_dir(), key)
+        for key in ("hooks", "mcpServers"):
+            self.assertTrue((PLUGIN_ROOT / manifest[key]).is_file(), key)
+        self.assertTrue((PLUGIN_ROOT / manifest["logo"]).is_file())
+
+    def test_single_plugin_does_not_ship_marketplace_manifest(self) -> None:
+        self.assertFalse(
+            (PLUGIN_ROOT / ".cursor-plugin" / "marketplace.json").exists()
+        )
+        self.assertFalse(
+            (PLUGIN_ROOT.parent / ".cursor-plugin" / "marketplace.json").exists()
+        )
+
+    def test_exact_command_skill_and_agent_sets(self) -> None:
+        commands = {path.stem for path in (PLUGIN_ROOT / "commands").glob("*.md")}
+        skills = {
+            path.parent.name
+            for path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md")
+        }
+        agents = {path.stem for path in (PLUGIN_ROOT / "agents").glob("*.md")}
+        self.assertEqual(commands, EXPECTED_COMMANDS)
+        self.assertEqual(skills, EXPECTED_SKILLS)
+        self.assertEqual(agents, EXPECTED_AGENTS)
+
+    def test_free_commands_are_explicitly_local_only(self) -> None:
+        self.assertEqual(len(FREE_COMMANDS), 9)
+        for command in FREE_COMMANDS:
+            text = (PLUGIN_ROOT / "commands" / f"{command}.md").read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(command=command):
+                self.assertIn("Never require or call MCP", text)
+                self.assertNotIn("Connected Advanced", text)
+
+    def test_all_component_frontmatter_is_complete_and_consistent(self) -> None:
+        component_paths = [
+            *((PLUGIN_ROOT / "commands").glob("*.md")),
+            *((PLUGIN_ROOT / "skills").glob("*/SKILL.md")),
+            *((PLUGIN_ROOT / "agents").glob("*.md")),
+        ]
+        self.assertEqual(
+            len(component_paths),
+            len(EXPECTED_COMMANDS) + len(EXPECTED_SKILLS) + len(EXPECTED_AGENTS),
+        )
+        for path in component_paths:
+            with self.subTest(path=path.relative_to(PLUGIN_ROOT)):
+                frontmatter = parse_frontmatter(path)
+                expected_name = path.parent.name if path.name == "SKILL.md" else path.stem
+                self.assertEqual(frontmatter.get("name"), expected_name)
+                self.assertTrue(frontmatter.get("description"))
+                body = path.read_text(encoding="utf-8").split("---", 2)[-1]
+                self.assertIn("#", body)
+
+    def test_rule_frontmatter_and_sql_reference_discovery(self) -> None:
+        rules = sorted((PLUGIN_ROOT / "rules").glob("*.mdc"))
+        self.assertEqual(
+            {path.name for path in rules},
+            {"ae-conventions.mdc", "ae-methodology.mdc", "data-safety.mdc"},
+        )
+        for path in rules:
+            frontmatter = parse_frontmatter(path)
+            self.assertTrue(frontmatter.get("description"))
+            self.assertEqual(frontmatter.get("alwaysApply"), "true")
+
+        sql_skill = PLUGIN_ROOT / "skills" / "sql-review" / "SKILL.md"
+        report_reference = (
+            PLUGIN_ROOT / "skills" / "sql-review" / "references" / "report-format.md"
+        )
+        self.assertTrue(report_reference.is_file())
+        self.assertIn(
+            "references/report-format.md", sql_skill.read_text(encoding="utf-8")
+        )
+
+
+class SqlFixtureContractTests(unittest.TestCase):
+    def test_all_sql_review_cases_are_present(self) -> None:
+        fixture_dir = PLUGIN_ROOT / "tests" / "fixtures" / "sql"
+        self.assertEqual(
+            {path.name for path in fixture_dir.glob("*.sql")},
+            {
+                "bad_group_by.sql",
+                "correct_query.sql",
+                "null_sensitive_filter.sql",
+                "one_to_many_fanout.sql",
+                "window_function.sql",
+            },
+        )
+
+    def test_fanout_fixture_and_skill_encode_detection_procedure(self) -> None:
+        fixture = (
+            PLUGIN_ROOT / "tests" / "fixtures" / "sql" / "one_to_many_fanout.sql"
+        ).read_text(encoding="utf-8").lower()
+        skill = (
+            PLUGIN_ROOT / "skills" / "sql-review" / "SKILL.md"
+        ).read_text(encoding="utf-8").lower()
+
+        self.assertIn("one-to-many", fixture)
+        self.assertIn("fans out", fixture)
+        self.assertIn("join order_items", fixture)
+        self.assertIn("sum(o.order_amount)", fixture)
+        for procedure_term in ("record grain changes", "key completeness", "fanout"):
+            self.assertIn(procedure_term, skill)
+        self.assertIn("many-to-many", skill)
+        self.assertIn("do not assume source uniqueness", skill)
+
+    def test_other_sql_fixtures_encode_the_intended_edge_cases(self) -> None:
+        fixtures = PLUGIN_ROOT / "tests" / "fixtures" / "sql"
+        bad_group = (fixtures / "bad_group_by.sql").read_text(encoding="utf-8").lower()
+        null_filter = (fixtures / "null_sensitive_filter.sql").read_text(
+            encoding="utf-8"
+        ).lower()
+        window = (fixtures / "window_function.sql").read_text(encoding="utf-8").lower()
+        correct = (fixtures / "correct_query.sql").read_text(encoding="utf-8").lower()
+
+        self.assertIn("order_status", bad_group)
+        self.assertNotIn("group by customer_id, order_status", bad_group)
+        self.assertIn("<> 'cancelled'", null_filter)
+        self.assertIn("three-valued logic", null_filter)
+        self.assertIn("row_number() over", window)
+        self.assertIn("order by ordered_at desc, order_id desc", window)
+        self.assertLess(correct.index("group by order_id"), correct.index("join item_totals"))
+        self.assertIn("left join", correct)
+
+
+class RuntimeConfigurationTests(unittest.TestCase):
+    def test_disconnected_mcp_configuration_is_structurally_valid(self) -> None:
+        with mock.patch.object(
+            socket, "create_connection", side_effect=AssertionError("network forbidden")
+        ):
+            config = read_json(PLUGIN_ROOT / "mcp.json")
+
+        self.assertEqual(set(config), {"mcpServers"})
+        self.assertEqual(set(config["mcpServers"]), {"analytics-engineering"})
+        server = config["mcpServers"]["analytics-engineering"]
+        self.assertEqual(set(server), {"url"})
+        parsed = urlparse(server["url"])
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.hostname, "mcp.analyticsengineering.com")
+        self.assertEqual(parsed.path, "/mcp")
+
+    def test_python_hook_requirement_is_explicit_and_fail_closed(self) -> None:
+        hooks = read_json(PLUGIN_ROOT / "hooks" / "hooks.json")
+        configured = [
+            hook
+            for hook_group in hooks["hooks"].values()
+            for hook in hook_group
+        ]
+        self.assertEqual(len(configured), 2)
+        for hook in configured:
+            self.assertTrue(hook["command"].startswith("python3 "))
+            self.assertIn("${CURSOR_PLUGIN_ROOT}", hook["command"])
+            self.assertTrue(hook["failClosed"])
+            self.assertGreater(hook["timeout"], 0)
+            self.assertNotIn("fallback", hook["command"].lower())
+
+        readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+        contributing = (PLUGIN_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        self.assertIn("Use `python3`", readme)
+        self.assertIn("Python 3 for hooks and tests", contributing)
+        for script in [
+            *(PLUGIN_ROOT / "hooks").glob("*.py"),
+            *(PLUGIN_ROOT / "scripts").glob("*.py"),
+        ]:
+            self.assertEqual(
+                script.read_text(encoding="utf-8").splitlines()[0],
+                "#!/usr/bin/env python3",
+            )
+
+    def test_distributed_text_contains_no_obvious_secret_values(self) -> None:
+        redactor = load_module("scripts/redact_secrets.py", "contract_redactor")
+        excluded_suffixes = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"}
+        # Git internals are not distributed content and are largely binary.
+        excluded_dirs = {"__pycache__", ".git"}
+        findings: dict[str, list[dict[str, object]]] = {}
+
+        for path in PLUGIN_ROOT.rglob("*"):
+            if not path.is_file() or path.suffix.lower() in excluded_suffixes:
+                continue
+            if excluded_dirs.intersection(path.parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            detected = redactor.findings_for_text(text)
+            if detected:
+                findings[path.relative_to(PLUGIN_ROOT).as_posix()] = detected
+
+        self.assertEqual(
+            findings,
+            {},
+            "Potential secret patterns found (values intentionally omitted): "
+            + json.dumps(findings, sort_keys=True),
+        )
+
+    def test_no_shipped_code_can_open_a_network_connection(self) -> None:
+        """Enforce the zero-transmission promise instead of merely asserting it.
+
+        PRIVACY.md commits to no telemetry, and the commitment is credible only
+        because a reader can verify it from the source. That makes it a property
+        of the code rather than of anyone's intent, so it needs to survive a
+        contributor who never opened PRIVACY.md. The single outbound path this
+        product is allowed is the optional MCP endpoint, which the host dials on
+        the plugin's behalf; nothing here opens a connection itself.
+
+        Imports are read with the AST rather than matched with a regex, because
+        the distinction that matters is a fine one. `urllib.parse` is string
+        handling and the cloud gate legitimately needs it to check an MCP host;
+        `urllib.request` is a transport and must never appear. Only a parser
+        separates them reliably, and a regex would either miss the second or ban
+        the first.
+        """
+        forbidden = (
+            "aiohttp",
+            "ftplib",
+            "http",
+            "httpx",
+            "imaplib",
+            "nntplib",
+            "poplib",
+            "requests",
+            "smtplib",
+            "socket",
+            "telnetlib",
+            "urllib.error",
+            "urllib.request",
+            "urllib3",
+            "websocket",
+            "websockets",
+            "xmlrpc",
+        )
+
+        def transports(module: str) -> bool:
+            return any(module == name or module.startswith(f"{name}.") for name in forbidden)
+
+        violations: list[str] = []
+        sources = sorted(
+            [*(PLUGIN_ROOT / "hooks").glob("*.py"), *(PLUGIN_ROOT / "scripts").glob("*.py")]
+        )
+        self.assertTrue(sources, "expected hook and script sources to exist")
+
+        for path in sources:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    violations.extend(
+                        f"{path.name}:{node.lineno} imports {alias.name}"
+                        for alias in node.names
+                        if transports(alias.name)
+                    )
+                elif isinstance(node, ast.ImportFrom):
+                    # A relative import cannot reach a networking module.
+                    if node.level == 0 and node.module and transports(node.module):
+                        violations.append(f"{path.name}:{node.lineno} imports from {node.module}")
+
+        self.assertEqual(
+            [],
+            violations,
+            "Shipped code gained the ability to open a network connection, which "
+            "contradicts the zero-telemetry commitment in PRIVACY.md:\n"
+            + "\n".join(violations),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

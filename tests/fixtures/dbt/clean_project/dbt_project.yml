@@ -1,0 +1,7 @@
+name: clean_project
+version: '1.0'
+config-version: 2
+model-paths: [models]
+models:
+  clean_project:
+    +materialized: view

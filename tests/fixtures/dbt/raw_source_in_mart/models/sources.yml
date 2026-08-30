@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: raw_payments
+    description: Raw payment service data.
+    tables:
+      - name: payments
+        description: Payment events.

@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Plugin contract and safety tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The plugin ships standard-library Python only, so there is nothing to install.
+      - name: Run test suite
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 tests/run_tests.py
+
+      # The VS Code and Antigravity layouts are generated, not authored. A source
+      # change that is not rebuilt would leave those hosts running older rules
+      # while still appearing to be governed by the current ones.
+      - name: Verify generated targets match the plugin source
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 scripts/build_targets.py --check

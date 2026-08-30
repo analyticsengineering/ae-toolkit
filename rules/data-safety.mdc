@@ -1,0 +1,24 @@
+---
+description: Enforce local-first privacy and safe, analysis-first data access
+alwaysApply: true
+---
+
+# Data Safety
+
+- Default to Local Basic: use local files, supplied snippets, and local tools. Free behavior never requires, discovers, authenticates to, or calls MCP.
+- Minimize data. Prefer schemas, metadata, aggregates, and redacted samples; never expose secrets, credentials, PII, or unnecessary raw rows.
+- Treat databases as read-only and analysis-first: inspect SQL and artifacts before execution; then prefer metadata, query plans, bounded `SELECT`s, and explicit limits.
+- V1 never executes `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `DROP`, `TRUNCATE`, or `ALTER`; provide reviewed proposals only. Approved database execution is limited to `SELECT` or `EXPLAIN` against a confirmed local/development target.
+- Connected Advanced behavior requires an explicit user trigger, successful authentication, destination and content preview, best-effort `scripts/redact_secrets.py` inspection, and explicit approval before access or transmission.
+- Use least privilege, report what was accessed or sent, and verify the result. If a gate fails, stay local.
+- Read and follow `references/privacy.md` for detailed handling.
+- Scope is analytics engineering only. Exclude frontend, generic backend, SEO, DevOps, and general app work.
+
+## Repository writes
+
+- Creating a new file is permitted without prior approval, because it is additive and a user can revert it with git. List every path created in the output.
+- Editing or deleting an existing file requires showing the change and receiving approval first. Never silently rewrite work a person already committed.
+- Never edit a file you have not read during this workflow.
+- Requests for approval state blast radius: downstream models, tests, exposures, and BI artifacts that depend on the file.
+- The same content can fall on either side of this line, and that is intended. Under model-level YAML, documentation for a new model is a new file and lands automatically; under a single grouped YAML, the identical content is an edit and needs approval.
+- Never run destructive version-control operations, including history rewrites, force pushes, resets that discard work, or branch deletion.

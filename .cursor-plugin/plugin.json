@@ -1,0 +1,26 @@
+{
+  "name": "analytics-engineering-toolkit",
+  "version": "1.1.0",
+  "description": "AI workflows for modern data professionals.",
+  "author": {
+    "name": "AnalyticsEngineering.com"
+  },
+  "homepage": "https://analyticsengineering.com",
+  "repository": "https://github.com/analyticsengineering/ae-toolkit",
+  "license": "MIT",
+  "keywords": [
+    "analytics-engineering",
+    "sql",
+    "dbt",
+    "data-quality",
+    "data-modeling",
+    "data-pipelines"
+  ],
+  "logo": "assets/logo.svg",
+  "rules": "rules/",
+  "skills": "skills/",
+  "agents": "agents/",
+  "commands": "commands/",
+  "hooks": "hooks/hooks.json",
+  "mcpServers": "mcp.json"
+}

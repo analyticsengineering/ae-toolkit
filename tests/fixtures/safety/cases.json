@@ -1,0 +1,24 @@
+{
+  "shell": [
+    {"command": "rm -rf build/", "permission": "deny", "reason_code": "destructive-filesystem"},
+    {"command": "git reset --hard HEAD~1", "permission": "deny", "reason_code": "destructive-git-reset"},
+    {"command": "psql -c 'DROP TABLE customers'", "permission": "deny", "reason_code": "destructive-database-ddl"},
+    {"command": "dbt build --target dev", "permission": "ask", "reason_code": "dbt-execution"},
+    {"command": "python3 scripts/profile_dataset.py sample.csv", "permission": "allow", "reason_code": "no-risk-pattern"},
+    {"command": "git diff --check", "permission": "allow", "reason_code": "no-risk-pattern"}
+  ],
+  "cloud": {
+    "mcp_server_name": "analytics-engineering",
+    "mcp_server_url": "https://mcp.analyticsengineering.com/mcp",
+    "tool_input": {
+      "query": "select count(*) from orders",
+      "schema": "analytics",
+      "requirement": "Validate order grain"
+    }
+  },
+  "unrelated_cloud": {
+    "mcp_server_name": "local-docs",
+    "mcp_server_url": "http://localhost:9999/mcp",
+    "tool_input": {"query": "local only"}
+  }
+}

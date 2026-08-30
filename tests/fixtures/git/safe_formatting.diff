@@ -1,0 +1,10 @@
+diff --git a/models/staging/stg_orders.sql b/models/staging/stg_orders.sql
+index 1111111..2222222 100644
+--- a/models/staging/stg_orders.sql
++++ b/models/staging/stg_orders.sql
+@@ -1,3 +1,5 @@
+-select order_id,customer_id from raw.orders
++select
++    order_id,
++    customer_id
++from raw.orders

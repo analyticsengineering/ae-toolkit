@@ -1,0 +1,108 @@
+version: 2
+models:
+  - name: stg_orders
+    description: One row per order, cleaned and renamed from the application replica.
+    columns:
+      - name: order_id
+        description: Stable identifier for an order.
+        data_tests:
+          - unique
+          - not_null
+  - name: stg_customers
+    description: One row per customer, cleaned and renamed from the application replica.
+    columns:
+      - name: customer_id
+        description: Stable identifier for a customer.
+        data_tests:
+          - unique
+          - not_null
+  - name: stg_products
+    description: One row per product, cleaned and renamed from the application replica.
+    columns:
+      - name: product_id
+        description: Stable identifier for a product.
+        data_tests:
+          - unique
+          - not_null
+  - name: stg_payments
+    description: One row per payment, cleaned and renamed from the application replica.
+    columns:
+      - name: payment_id
+        description: Stable identifier for a payment.
+        data_tests:
+          - unique
+          - not_null
+  - name: stg_refunds
+    description: One row per refund, cleaned and renamed from the application replica.
+    columns:
+      - name: refund_id
+        description: Stable identifier for a refund.
+        data_tests:
+          - unique
+          - not_null
+  - name: fct_orders
+    description: One row per order, with the amount the customer committed to pay.
+    columns:
+      - name: order_id
+        description: Stable identifier for an order.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Customer who placed the order.
+        data_tests:
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+  - name: fct_payments
+    description: One row per payment captured against an order.
+    columns:
+      - name: payment_id
+        description: Stable identifier for a payment.
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: Order the payment was captured against.
+        data_tests:
+          - relationships:
+              to: ref('fct_orders')
+              field: order_id
+  - name: fct_refunds
+    description: One row per refund issued against an order.
+    columns:
+      - name: refund_id
+        description: Stable identifier for a refund.
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: Order the refund was issued against.
+        data_tests:
+          - relationships:
+              to: ref('fct_orders')
+              field: order_id
+  - name: dim_customers
+    description: One row per customer, with the attributes reporting describes them by.
+    columns:
+      - name: customer_id
+        description: Stable identifier for a customer.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_key
+        description: Surrogate key for the customer dimension.
+        data_tests:
+          - unique
+  - name: dim_products
+    description: One row per product, with the attributes reporting describes them by.
+    columns:
+      - name: product_id
+        description: Stable identifier for a product.
+        data_tests:
+          - unique
+          - not_null
+      - name: product_key
+        description: Surrogate key for the product dimension.
+        data_tests:
+          - unique

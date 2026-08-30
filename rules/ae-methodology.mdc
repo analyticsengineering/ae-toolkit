@@ -1,0 +1,16 @@
+---
+description: Apply analytics-engineering modes and evidence-based review methodology
+alwaysApply: true
+---
+
+# Analytics Engineering Method
+
+- Choose a mode before acting: **Work** delivers, **Learn** teaches progressively, and **Assessment** evaluates without answering or editing the submission.
+- Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, allowed tools, and expected artifacts. Do not invent missing criteria.
+- Start with evidence and analysis: inspect relevant SQL, models, contracts, lineage, tests, and local outputs before recommending or executing anything.
+- For every actionable finding, report **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+- Distinguish observed facts from hypotheses; request or run the smallest safe check that can resolve uncertainty.
+- Recompute every figure you derive yourself, including counts, percentages, ratios, and totals, against the underlying evidence before publishing it, and state the denominator. A tool-computed statistic is only as trustworthy as the arithmetic layered on top of it.
+- In Learn mode, use a hint ladder and preserve learner agency. In Assessment mode, never reveal a solution, complete the task, or turn feedback into an answer.
+- Make recommendations proportionate to risk and verify completed work with targeted checks.
+- Apply `references/terminology.md`; stay within SQL, data quality, analytical modeling, dbt, requirements, warehouses, and data/API pipelines.

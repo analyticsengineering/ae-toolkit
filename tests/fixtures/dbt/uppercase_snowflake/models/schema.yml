@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: STG_ORDERS
+    description: One row per order from the ERP feed.
+    columns:
+      - name: ORDER_ID
+        description: Natural key of the order.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: STG_CUSTOMERS
+    description: One row per customer.
+    columns:
+      - name: CUSTOMER_ID
+        description: Natural key of the customer.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: STG_PRODUCTS
+    description: One row per product.
+    columns:
+      - name: PRODUCT_ID
+        description: Natural key of the product.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: STG_PAYMENTS
+    description: One row per payment.
+    columns:
+      - name: PAYMENT_ID
+        description: Natural key of the payment.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: STG_REFUNDS
+    description: One row per refund.
+    columns:
+      - name: REFUND_ID
+        description: Natural key of the refund.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: FCT_ORDERS
+    description: One row per order with customer detail attached.
+    columns:
+      - name: ORDER_KEY
+        description: Surrogate key of the order.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: DIM_CUSTOMERS
+    description: One row per customer.
+    columns:
+      - name: CUSTOMER_KEY
+        description: Surrogate key of the customer.
+        data_tests:
+          - unique
+          - not_null

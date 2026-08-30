@@ -1,0 +1,103 @@
+---
+name: data-quality-investigation
+description: Investigates data-quality incidents through scoped hypotheses, evidence, status updates, and controlled next tests. Use when metrics drift, data is missing/duplicated/stale, tests fail, or a pipeline output appears wrong.
+---
+
+# Data Quality Investigation
+
+Use a hypothesis/evidence/status/next-test workflow. Never declare root cause without supporting evidence.
+
+## When to use
+
+- Investigate missing, duplicate, stale, delayed, malformed, inconsistent, or unexpectedly changed data.
+- Triage failed data tests, dashboard discrepancies, metric breaks, and pipeline incidents.
+- Use for diagnosis; do not implement remediation unless the user asks.
+
+## Required context
+
+Obtain:
+
+- Symptom, reporter, first observation, expected versus actual result, affected asset/metric, and business impact.
+- Time window, environment, recent known changes, pipeline lineage, owners, and available logs/tests/artifacts.
+- Access and privacy boundaries plus incident urgency.
+- Operating mode: **Work**, **Learn**, or **Assessment**.
+
+In Work mode, minimize impact and time-to-evidence. In Learn mode, explain hypothesis testing and evidence quality. In Assessment mode, evaluate the learner's submitted hypotheses and tests without revealing the investigation answer.
+
+## Inspection procedure
+
+1. Open an incident record with symptom, scope, impact, timing, and current confidence.
+2. Verify the symptom independently using the safest existing artifact or bounded check; preserve exact timestamps and definitions.
+3. Bound the incident by start/end time, entities, partitions, sources, consumers, and environments. Distinguish event time from processing time.
+4. Build a lineage and recent-change timeline from read-only evidence.
+5. Create ranked hypotheses. For each, record:
+   - **Hypothesis**
+   - **Evidence for**
+   - **Evidence against**
+   - **Status:** `UNTESTED`, `TESTING`, `SUPPORTED`, `WEAKENED`, `REJECTED`, or `CONFIRMED`
+   - **Next test** and expected discriminating outcomes
+6. Run or propose one discriminating, bounded test at a time. Update the record after every result.
+7. Consider source, ingestion, orchestration, transformation, storage, semantic, and consumption layers; do not anchor on the latest deploy.
+8. Recommend containment separately from root-cause remediation.
+9. Declare root cause only when evidence establishes the causal mechanism, affected path, and observed symptom. Otherwise report the leading hypothesis and uncertainty.
+
+Read-only local inspection may proceed. Connected observability, warehouse, orchestrator, ticketing, or communication functionality requires an explicit user trigger. Costly queries, reruns, backfills, mutations, or outbound updates require approval.
+
+## Decision framework
+
+Prioritize tests by:
+
+- Ability to discriminate among hypotheses.
+- Safety, privacy, scan cost, and reversibility.
+- Time to result and incident impact.
+- Proximity to the first known bad boundary.
+
+Confidence states:
+
+- **Confirmed root cause** — causal mechanism reproduced or directly evidenced, with alternatives materially ruled out.
+- **Leading hypothesis** — best current explanation, but a named causal test remains.
+- **Unknown** — evidence is insufficient or contradictory.
+
+Do not use “root cause” for correlation, temporal proximity, or absence of another explanation.
+
+## Failure modes
+
+- Jumping from a failed downstream metric to a source-system blame statement.
+- Running broad warehouse scans before bounding partitions and columns.
+- Changing code or rerunning pipelines during diagnosis without preserving evidence.
+- Treating recovery as proof of root cause.
+- Ignoring time zones, late data, backfills, retries, or semantic-layer changes.
+- Posting unsupported conclusions as incident status.
+
+## Evidence required
+
+Maintain an evidence ledger with timestamp, source, scope, query/command or artifact, result, and interpretation. Preserve the distinction between raw observation and inference. A confirmed root cause requires:
+
+- First bad boundary or causal change.
+- Mechanism linking it to the symptom.
+- Reproduction, counterfactual, or equivalent direct evidence.
+- Scope consistent with affected and unaffected data.
+- Contradictory hypotheses addressed.
+
+## Output contract
+
+Return `# Data Incident Investigation` with: Observed symptom; Most likely causes; Evidence checked; Ruled-out hypotheses; Remaining hypotheses; Root cause, if proven; Recommended fix; Prevention; Tests/alerts to add. Preserve a `Hypothesis / Evidence / Status / Next test` ledger in the report.
+
+## Verification
+
+- Reproduce or independently confirm the symptom.
+- Check affected and unaffected cohorts/partitions.
+- Validate time zones, run IDs, code revisions, and artifact freshness.
+- After recovery, verify completeness, uniqueness, freshness, reconciliation, and downstream consumers.
+- Ensure prevention tests detect the demonstrated failure mechanism.
+
+## Safety/privacy
+
+- Prefer metadata, aggregates, bounded partitions, and read replicas.
+- Never expose credentials, personal data, or raw incident payloads unnecessarily.
+- Do not backfill, rerun, delete, overwrite, pause, or message external channels without explicit approval.
+- Preserve forensic evidence before potentially state-changing actions.
+
+## What not to assume
+
+Do not assume the latest change caused the incident, monitoring is complete, timestamps align, retries are idempotent, upstream data is correct, one symptom has one cause, restored data is complete, or correlation proves causation.

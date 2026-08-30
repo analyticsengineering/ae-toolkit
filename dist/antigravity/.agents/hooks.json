@@ -1,0 +1,27 @@
+{
+  "ae-toolkit-safety": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .agents/ae-toolkit/hooks/safety_gate.py --host antigravity",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "call_mcp_tool",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .agents/ae-toolkit/hooks/cloud_data_gate.py --host antigravity",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+name: raw_source_in_mart
+version: '1.0'
+config-version: 2
+model-paths: [models]

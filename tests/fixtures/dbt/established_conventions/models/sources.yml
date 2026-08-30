@@ -1,0 +1,22 @@
+version: 2
+sources:
+  - name: app
+    description: Application database replica.
+    database: "{{ target.database }}"
+    schema: raw_app
+    loaded_at_field: _loaded_at
+    freshness:
+      warn_after:
+        count: 12
+        period: hour
+    tables:
+      - name: orders
+        description: One row per placed order.
+      - name: customers
+        description: One row per registered customer.
+      - name: products
+        description: One row per sellable product.
+      - name: payments
+        description: One row per captured payment.
+      - name: refunds
+        description: One row per issued refund.

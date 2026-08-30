@@ -1,0 +1,11 @@
+{
+  "exercise_id": "sql-fanout-001",
+  "module_id": "sql-review",
+  "lesson_id": "join-cardinality",
+  "mode": "Assessment",
+  "skills": ["sql-review", "grain-analysis"],
+  "course_url": "https://analyticsengineering.com/courses/sql-review/join-cardinality",
+  "constraints": ["Do not execute SQL", "Do not reveal a corrected query"],
+  "allowed_tools": ["local-file-read"],
+  "expected_artifacts": ["submission.sql"]
+}

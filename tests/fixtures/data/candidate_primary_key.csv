@@ -1,0 +1,5 @@
+event_id,event_type,occurred_on
+evt-001,created,2026-01-01
+evt-002,updated,2026-01-02
+evt-003,updated,2026-01-03
+evt-004,deleted,2026-01-04

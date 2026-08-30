@@ -1,0 +1,9 @@
+region,segment,amount,optional_note
+North,Enterprise,10,
+north,enterprise,20,
+NORTH,Enterprise,30,
+South,SMB,,
+South,S.M.B.,,
+South,smb,,
+South,SMB,,
+South,SMB,,
