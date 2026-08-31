@@ -29,11 +29,12 @@ Default silently to Work mode and optimize for decisions and reusable evidence. 
 2. Locate `.github/ae-toolkit/scripts/profile_dataset.py` from the toolkit root. Inspect its `--help` or source only as needed to determine supported arguments; do not alter it.
 3. **Compute first:** invoke `.github/ae-toolkit/scripts/profile_dataset.py` on the approved dataset before drawing conclusions. Prefer the narrowest supported bounded invocation that still answers the request.
 4. If the script is missing, incompatible, or fails, report the exact blocker and command/error evidence. Do not silently replace it with ad hoc profiling. Offer a fallback and wait for approval.
-5. For JSON, verify the record-bearing array or object path before interpreting row count. Never treat an API envelope as the analytical record grain merely because it parsed successfully.
-6. Capture reproducibility details: input identity, size or row count, invocation, sampling/limits, parser settings, and profiler version or file revision when available.
-7. Interpret shape and schema; null counts/rates; distinct counts; candidate uniqueness; numeric and temporal ranges; categorical variants; duplicate rows; constants; outliers; PII warnings; and parse/type anomalies.
-8. Compare related fields and declared expectations. Treat candidate keys, outliers, semantic types, and value-pattern PII warnings as hypotheses until field semantics support them.
-9. Prioritize material anomalies and propose targeted next tests.
+5. For JSON, verify the record-bearing array or object path before interpreting row count. Never treat an API envelope as the analytical record grain merely because it parsed successfully. When the profiler reports more than one plausible record array, choose with `--record-path` and say which one you chose and why, rather than accepting whichever it found first.
+6. Capture reproducibility details: input identity, size or row count, invocation, sampling/limits, parser settings, and profiler version or file revision when available. Report `header_normalizations` when present: a duplicate or blank column heading was renamed to profile the file at all, and the reader's column list will not match the file's.
+7. Interpret shape and schema; null counts/rates; distinct counts; candidate uniqueness; numeric and temporal ranges; categorical variants; duplicate rows; constants; outliers; PII warnings; and parse/type anomalies. Read `null_count`, `sentinel_null_count`, and `missing_count` as three different facts: an empty cell, a value such as `N/A` or `unknown` standing in for one, and the two together. A column that is complete on the first measure and half sentinel on the second is a data-quality finding, not a clean column.
+8. On a column the profiler marked `potential_pii`, extrema, ranges, and outlier bounds are withheld deliberately. Do not reconstruct them from the raw file to fill the section. Report the distributional facts that do not identify anyone, and say the range was suppressed.
+9. Compare related fields and declared expectations. Treat candidate keys, outliers, semantic types, and value-pattern PII warnings as hypotheses until field semantics support them.
+10. Prioritize material anomalies and propose targeted next tests.
 
 ## Decision framework
 

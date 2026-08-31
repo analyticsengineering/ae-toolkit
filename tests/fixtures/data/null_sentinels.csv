@@ -1,0 +1,7 @@
+order_id,status,shipped_at,notes
+1,shipped,2026-01-04,
+2,N/A,NULL,fine
+3,unknown,2026-01-06,none
+4,shipped,,NA
+5,-,2026-01-08,n/a
+6,shipped,null,ok

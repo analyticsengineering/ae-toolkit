@@ -240,9 +240,9 @@ No course submission is automatic. The presence of `.ae/exercise.json`, an MCP c
 
 V1 is deliberately conservative:
 
-- `DROP` and `TRUNCATE` database statements are denied.
-- `INSERT`, `UPDATE`, `DELETE`, `MERGE`, and `ALTER` database statements are denied.
-- `SELECT` and `EXPLAIN` through recognized database clients require explicit approval and confirmation of an approved local or development target.
+- a recognized database client is allowed only what the gate can prove is a single `SELECT` or `EXPLAIN`, and that still requires explicit approval and confirmation of a local or development target.
+- everything else through those clients is denied, including `DROP`, `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, and `ALTER`, a second statement after a semicolon, a statement supplied by file, and any invocation whose statement the gate cannot read. Denying what it cannot read is the point: an allowlist that guesses is not one.
+- destructive Git operations are denied by what they do rather than by how they are spelled, through shell wrappers, clustered options, and command chains, and without matching the same words quoted inside `echo`.
 - warehouse-executing dbt commands require approval and target review.
 - automated validation rejects production-like targets, unbounded selectors, and `--full-refresh`.
 - proposed SQL is text for human review, not authorization to execute it.
@@ -261,9 +261,10 @@ Python 3 is required for deterministic inspectors, hook execution, and tests. Th
 - `python3 scripts/inspect_git.py [path] [--base BRANCH] [--pretty]` reports branch, status, and diffs using read-only Git commands.
 - `python3 scripts/inspect_dbt.py [path] [--pretty]` statically inspects a dbt project without executing dbt.
 - `python3 scripts/infer_conventions.py [path] [--json] [--write] [--force]` derives house naming, key, test, documentation, and SQL conventions with supporting/contradicting counts, while reporting loaded-at fields and freshness SLAs separately by source/table. `--write` creates `.ae/project.yml` and refuses to replace an existing profile without `--force`.
-- `python3 scripts/plan_dbt_validation.py [path] [--model NAME] [--target TARGET] [--intent static|compile|test|run|build|source_freshness] [--allow-broader-intent] [--pretty]` plans a bounded dbt selector and command sequence without executing it. It understands model SQL/YAML, singular tests, source tests/freshness, semantic resources, and dependency-wide macro/project changes; it omits unnecessarily broad commands unless deliberately overridden.
-- `python3 scripts/interpret_dbt_results.py [--run-results PATH] [--log PATH] [--pretty]` classifies current dbt failures from local artifacts and redacts secret-shaped values.
-- `python3 scripts/profile_dataset.py PATH [--format csv|json|jsonl|ndjson] [--encoding NAME] [--delimiter CHAR] [--pretty]` deterministically profiles a local dataset.
+- `python3 scripts/plan_dbt_validation.py [path] [--model NAME] [--paths PATH ...] [--state DIR] [--target TARGET] [--intent static|compile|test|run|build|source_freshness] [--allow-broader-intent] [--pretty]` plans bounded dbt validation without executing it. It emits ordered independent `validation_steps`, so a tree holding a changed model, a changed test, and a changed source freshness threshold keeps all three checks instead of collapsing into one. `--state` supplies prior artifacts for resolving what depended on a deleted resource. The legacy `intent`, `selectors`, and `commands` fields are derived from the steps.
+- `python3 scripts/interpret_dbt_results.py [--project-dir PATH] [--run-results PATH] [--sources PATH] [--log PATH] [--pretty]` classifies current dbt failures and source-freshness results from local artifacts, and redacts secret-shaped values. With `--project-dir` it finds artifacts at the project's configured target path.
+- `python3 scripts/profile_dataset.py PATH [--format csv|json|jsonl|ndjson] [--record-path KEY] [--encoding NAME] [--delimiter CHAR] [--pretty]` deterministically profiles a local dataset. It suppresses ranges and outlier bounds on personal columns, counts sentinels such as `N/A` separately from genuine nulls, reports duplicate and blank header renames, and refuses to guess between two plausible JSON record arrays.
+- `python3 scripts/project_context.py [path] [--pretty]` reports the resolved Git root, active dbt project, and configured resource paths, and names the candidates instead of choosing when a repository holds more than one project. The planner and inspectors share this answer.
 - `python3 scripts/redact_secrets.py ...` performs best-effort detection/redaction before optional cloud transmission.
 - `hooks/safety_gate.py` classifies shell and database commands before execution.
 - `hooks/cloud_data_gate.py` validates the AnalyticsEngineering.com host, blocks likely secrets, previews payload fields and approximate bytes, and asks before connected transfer.

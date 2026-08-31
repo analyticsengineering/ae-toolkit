@@ -21,18 +21,19 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
    - `python3 ".github/ae-toolkit/scripts/inspect_dbt.py" <project-root> --pretty`
    - `python3 ".github/ae-toolkit/scripts/inspect_git.py" <project-root> --pretty`
 3. Determine whether the user named a scope. If not, derive it only from changed dbt resources. Classify YAML changes: formatting/comments and descriptions are static; generic, unit, and source tests validate only their named resources; source freshness and loaded-at changes validate the affected source tables; contract fields, renames, and deletions include downstream consumers; semantic/metric changes resolve affected consumers before any model build. Parse `ref()` and `source()` calls in changed singular tests and select the exact test. Macro, package, or project-config changes require explicit affected model scope before warehouse work. Do not turn an unrelated dirty worktree into validation scope.
-4. Run `python3 ".github/ae-toolkit/scripts/plan_dbt_validation.py" <project-root> --intent <intent> [--model <name>] [--target <dev-target>] --pretty`.
-5. Review `recommended_intent`, its reason, and the plan rather than trusting either blindly. The planner omits an unnecessarily broad warehouse command for metadata-only or test-only changes unless `--allow-broader-intent` is deliberately supplied. Confirm every selected node exists, YAML changes map to the reported models, renamed resources include downstream consumers, and the scope is not global.
-6. Run static `dbt parse` and `dbt ls` steps one at a time when useful. Stop if selector resolution differs from the plan.
-7. Before `compile`, `show`, `test`, `run`, `build`, `debug`, or `docs generate`, show one exact command and state:
+4. Run `python3 ".github/ae-toolkit/scripts/plan_dbt_validation.py" <project-root> --intent <intent> [--model <name>] [--paths <changed-path>] [--state <prior-artifacts>] [--target <dev-target>] --pretty`.
+5. Read `validation_steps`, not just `intent`. A mixed change produces several independent bounded operations, and each one is there because a different resource changed; running only the broadest of them skips the others. Review `recommended_intent` and its reason rather than trusting either blindly. The planner omits an unnecessarily broad warehouse command for metadata-only or test-only changes unless `--allow-broader-intent` is deliberately supplied. Confirm every selected node exists, YAML changes map to the reported models, renamed resources include downstream consumers, and the scope is not global.
+6. Check `excluded_changes`, `unsupported_yaml`, and `unresolvable_deletions` before executing. A file excluded as belonging to another project in the same repository is not validated here; a YAML construct the reader cannot interpret makes that file's contribution unknown rather than absent; a deleted resource with no prior state needs explicit downstream scope, which `--state` can often supply instead.
+7. Run static `dbt parse` and `dbt ls` steps one at a time when useful. Stop if selector resolution differs from the plan.
+8. Before `compile`, `show`, `test`, `run`, `build`, `debug`, `docs generate`, or `source freshness`, show one exact command and state:
    - why this is the smallest sufficient command;
    - the explicit target and evidence it is local/development;
    - resources and materializations in scope;
    - whether warehouse objects may be created or replaced.
-8. Obtain approval, then run exactly that command. Do not batch a second dbt command into the same shell call.
-9. Read the resulting `target/run_results.json` or bounded log with `python3 ".github/ae-toolkit/scripts/interpret_dbt_results.py" --run-results <path> [--log <path>] --pretty`.
-10. If validation fails, identify the smallest repair. When the request explicitly includes fixing failures, apply reversible project-owned SQL/YAML/test edits without a second approval. Otherwise preview the repair first because validation alone does not authorize edits. Contract changes, renames, deletions, and scope expansion always require preview, blast radius, and approval.
-11. Re-plan after a repair. Never broaden a selector silently. Stop after five execution attempts and report unresolved evidence rather than looping.
+9. Obtain approval, then run exactly that command. Do not batch a second dbt command into the same shell call. Where the plan lists several warehouse steps, approve and run them one at a time, in order.
+10. Read the resulting artifacts with `python3 ".github/ae-toolkit/scripts/interpret_dbt_results.py" --project-dir <project-root> [--run-results <path>] [--sources <path>] [--log <path>] --pretty`. Passing the project directory lets the interpreter find `run_results.json` and `sources.json` at their configured target path rather than assuming `target/`.
+11. If validation fails, identify the smallest repair. When the request explicitly includes fixing failures, apply reversible project-owned SQL/YAML/test edits without a second approval. Otherwise preview the repair first because validation alone does not authorize edits. Contract changes, renames, deletions, and scope expansion always require preview, blast radius, and approval.
+12. Re-plan after a repair. Never broaden a selector silently. Stop after five execution attempts and report unresolved evidence rather than looping.
 
 ## Command choice
 

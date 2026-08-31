@@ -1,0 +1,11 @@
+name: finance
+version: '2.1'
+config-version: 2
+model-paths: [transform]
+test-paths: [assertions]
+macro-paths: [udfs]
+target-path: artifacts
+packages-install-path: vendor
+models:
+  finance:
+    +materialized: table

@@ -1,0 +1,4 @@
+name: ambiguous_adapter
+version: '1.0'
+config-version: 2
+model-paths: [models]

@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: fct_revenue
+    description: Net revenue per invoice.
+    latest_version: 2
+    versions:
+      - v: 2
+    columns:
+      - name: invoice_id
+        description: Stable invoice identifier.
+        data_tests:
+          - unique
+          - not_null
+      - name: net_amount_cents
+        description: Invoice amount after adjustments.
+
+  - name: fct_customer_ltv
+    description: Lifetime value per customer.
+    config:
+      meta:
+        semantic: true
+    columns:
+      - name: customer_id
+        description: Stable customer identifier.
+        data_tests:
+          - not_null
+
+semantic_models:
+  - name: revenue
+    model: ref('fct_revenue')
+    entities:
+      - name: invoice
+        type: primary
+        expr: invoice_id
+    measures:
+      - name: net_revenue
+        agg: sum
+        expr: net_amount_cents
+
+metrics:
+  - name: net_revenue
+    label: Net revenue
+    type: simple
+    type_params:
+      measure: net_revenue

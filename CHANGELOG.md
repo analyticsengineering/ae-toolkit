@@ -6,7 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- A shared deterministic core resolves the questions every dbt-facing script used to answer for itself. `scripts/project_context.py` establishes the Git root, the active dbt project, and every configured resource path; `scripts/resource_identity.py` gives each resource a type, name, version, language, and dependency list; `scripts/artifact_inventory.py` reads build artifacts from the configured target and prior state; `scripts/git_scope.py` normalizes changes into project-relative records. A monorepo with two projects, a project below the Git root, and a project that renames `models/` were each enough to make the old literal paths wrong.
+- Validation plans emit `plan_version: 2` with independent ordered `validation_steps`. A tree holding a changed Python model, a changed singular test, and a changed source freshness threshold now produces three separately bounded operations instead of collapsing into one intent and losing two of the three checks. The `intent`, `selectors`, `scope`, and `commands` fields are derived from the steps and remain for existing consumers.
+- Deleted resources resolve their surviving consumers from prior dbt state when `--state` supplies it. Without that state the plan says so and asks for explicit scope rather than emitting a selector naming a model that no longer exists.
+- YAML anchors, aliases, merge keys, multi-document files, and inline mappings are detected and reported by construct and path. The bundled reader parses an alias as the literal string `*standard_freshness`, which previously became a confident and wrong answer about a source's freshness.
+- Crossed hostile fixtures exercise the traits that only break in combination: a Python model under a custom `model-paths` in a nested project with a package-qualified versioned ref, an unrelated sibling project dirty at the same time, and an installed package inside a renamed packages directory. Companion tests disable each new guard and confirm the original defect returns.
+
 ### Fixed
+
+- Recognized database clients now allow only a provable `SELECT` or `EXPLAIN`, as an approval-gated read. Anything else, including a statement supplied by file, a statement the gate cannot read, and a second statement hidden behind a semicolon, is denied. The client list covers the warehouse CLIs an analytics engineer actually reaches for rather than a handful of spellings.
+- The shell gate enforces the written policy on destructive Git rather than a subset of its spellings: force push, forced checkout and switch, branch deletion, and stash destruction are denied, through `-lc` wrappers, clustered short options, value-taking `sudo` and `env` options, and command chains, and without matching the same words quoted inside `echo`.
+- The cloud gate scans payloads with the same secret detector the rest of the toolkit uses, so a token format added in one place is no longer still transmittable from the other. Previews that stop early now say how many named fields and list entries they omitted, and report the payload's shape and size, because a preview that silently truncates describes less than it is about to send.
+- Dataset profiling suppresses ranges, extrema, and outlier bounds for numeric personal columns such as salary, balance, and government identifiers. A minimum and maximum salary across six rows comes close to naming the people in the file.
+- Only genuinely empty values count as nulls. Sentinels such as `N/A`, `unknown`, and `-` are counted and named separately, so a column that is 50 percent sentinel is no longer reported as complete or as empty.
+- Duplicate and blank CSV headers are renamed on the record, with the original name, position, and reason reported instead of columns silently overwriting each other.
+- A JSON document containing more than one plausible record array names the candidates and their row counts rather than profiling whichever came first; `--record-path` selects one.
+- Source freshness results are interpreted from the configured `sources.json` with per-table status, lag, and generated time, closing the loop between running a freshness check and reading its outcome.
+- Adapter inference no longer treats `partition_by` and `cluster_by` as evidence, since several warehouses use both. A confident answer now requires exclusive syntax, a pinned adapter package, or profile evidence.
+- Incremental warnings are strategy-aware: an `append` model needs no `unique_key`, while a `merge` model without one is still a defect.
 
 - Convention inference reads both legacy direct and modern dbt `config:` placement for source/table `loaded_at_field` and freshness properties.
 - Model-description coverage uses every project-owned SQL model as its denominator; listed YAML columns no longer imply complete output-column documentation.
@@ -21,6 +40,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Correctness-critical unknown source mutation, delete, correction-timestamp, and lateness behavior may produce one focused question after local evidence is exhausted.
 - Column renames route explicitly: private atomic name-only changes use `rename-model`, while published interfaces requiring compatibility or phased cutover use `migration-plan`.
+- An explicit request to build an ingestion pipeline authorizes reversible local extractor, schema, and orchestration edits under the ordinary repository write rules. Running the pipeline stays separately gated: calling the API, a secret manager, a cloud, or a warehouse still needs an explicit trigger and approval.
 
 ## [1.2.1] - 2026-08-31
 

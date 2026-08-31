@@ -13,29 +13,24 @@ from urllib.parse import urlparse
 # Hooks are invoked by absolute path from an arbitrary working directory, so the
 # sibling module is not importable without this.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import host_contract  # noqa: E402
+import redact_secrets  # noqa: E402
 
 
 SERVER_NAME = "analytics-engineering"
 SERVER_HOST = "mcp.analyticsengineering.com"
-SENSITIVE_KEY = re.compile(
-    r"(?:^|_)(?:api_?key|access_?token|refresh_?token|client_?secret|password|"
-    r"passwd|private_?key|authorization|cookie)(?:$|_)",
-    re.IGNORECASE,
-)
-SECRET_VALUE = re.compile(
-    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
-    r"\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}\b|"
-    r"\bAIza[0-9A-Za-z_-]{30,}\b|"
-    r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|"
-    r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"
-)
 CONTENT_KEY = re.compile(
     r"(sql|code|content|query|data|dataset|schema|submission|answer|diff|"
     r"requirement|profile|manifest|model|file|path|repo|company)",
     re.IGNORECASE,
 )
+# How many field paths a preview names before it stops. Whatever is omitted is
+# still being sent, so the count and the payload size are always reported.
+PREVIEW_FIELD_LIMIT = 12
+# How deep into a list the preview looks for content fields.
+PREVIEW_LIST_LIMIT = 20
 
 
 def response(
@@ -62,38 +57,45 @@ def parse_tool_input(raw: Any) -> Any:
 
 
 def find_secret(value: Any, path: str = "$") -> str | None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            key_text = str(key)
-            child_path = f"{path}.{key_text}"
-            if SENSITIVE_KEY.search(key_text) and child not in ("", None, [], {}):
-                return child_path
-            found = find_secret(child, child_path)
-            if found:
-                return found
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            found = find_secret(child, f"{path}[{index}]")
-            if found:
-                return found
-    elif isinstance(value, str) and SECRET_VALUE.search(value):
-        return path
-    return None
+    """The first credential location in a payload, using the canonical scanner."""
+    findings = redact_secrets.scan_structure(value, path)
+    return findings[0]["path"] if findings else None
 
 
-def content_fields(value: Any, path: str = "$") -> list[str]:
+def content_fields(value: Any, path: str = "$") -> tuple[list[str], bool]:
+    """Content field paths, and whether the walk stopped short of the payload.
+
+    A preview that quietly stops at the twentieth list element describes less
+    than it is about to send, and the reader approves the description.
+    """
     fields: list[str] = []
+    truncated = False
     if isinstance(value, dict):
         for key, child in value.items():
             key_text = str(key)
             child_path = f"{path}.{key_text}"
             if CONTENT_KEY.search(key_text):
                 fields.append(child_path)
-            fields.extend(content_fields(child, child_path))
+            child_fields, child_truncated = content_fields(child, child_path)
+            fields.extend(child_fields)
+            truncated = truncated or child_truncated
     elif isinstance(value, list):
-        for index, child in enumerate(value[:20]):
-            fields.extend(content_fields(child, f"{path}[{index}]"))
-    return fields
+        if len(value) > PREVIEW_LIST_LIMIT:
+            truncated = True
+        for index, child in enumerate(value[:PREVIEW_LIST_LIMIT]):
+            child_fields, child_truncated = content_fields(child, f"{path}[{index}]")
+            fields.extend(child_fields)
+            truncated = truncated or child_truncated
+    return fields, truncated
+
+
+def payload_shape(value: Any) -> str:
+    """A one-line description of what is being sent, independent of the preview."""
+    if isinstance(value, dict):
+        return f"object with {len(value)} top-level fields"
+    if isinstance(value, list):
+        return f"array of {len(value)} items"
+    return type(value).__name__
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -203,17 +205,28 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     serialized = json.dumps(tool_input, ensure_ascii=False, default=str)
-    fields = sorted(set(content_fields(tool_input)))
-    field_summary = ", ".join(fields[:12]) if fields else "request parameters"
-    if len(fields) > 12:
-        field_summary += f", and {len(fields) - 12} more fields"
+    discovered, walk_truncated = content_fields(tool_input)
+    fields = sorted(set(discovered))
+    shown = fields[:PREVIEW_FIELD_LIMIT]
+    field_summary = ", ".join(shown) if shown else "request parameters"
+
+    omissions: list[str] = []
+    if len(fields) > PREVIEW_FIELD_LIMIT:
+        omissions.append(f"{len(fields) - PREVIEW_FIELD_LIMIT} further named fields")
+    if walk_truncated:
+        omissions.append(
+            f"list entries beyond the first {PREVIEW_LIST_LIMIT}, which are still sent"
+        )
 
     message = (
         "This analysis will send the following selected content to "
-        f"AnalyticsEngineering.com: {field_summary} "
-        f"(approximately {len(serialized.encode('utf-8'))} bytes). "
-        "No content is sent until you approve."
+        f"AnalyticsEngineering.com: {field_summary}. "
+        f"The full payload is {payload_shape(tool_input)}, approximately "
+        f"{len(serialized.encode('utf-8'))} bytes."
     )
+    if omissions:
+        message += " This preview omits " + " and ".join(omissions) + "."
+    message += " No content is sent until you approve."
     print(
         host_contract.render(
             response(

@@ -14,6 +14,13 @@ from typing import Any, Iterable, Sequence
 
 
 SKIP_DIRECTORIES = {".git", ".venv", "venv", "node_modules", "__pycache__", "logs"}
+MODEL_SUFFIXES = {".sql", ".py"}
+# Incremental strategies that replace or append whole partitions do not need a
+# unique key. Warning about them taught readers to ignore the warning.
+STRATEGIES_WITHOUT_UNIQUE_KEY = {"append", "insert_overwrite", "microbatch"}
+# Keys that mark semantic-layer configuration attached to a model entry rather
+# than declared at the top of a file.
+MODEL_SEMANTIC_KEYS = {"semantic_model", "measures", "entities", "dimensions"}
 PROJECT_LIST_KEYS = {
     "model-paths",
     "seed-paths",
@@ -211,8 +218,35 @@ def _manifest_summary(manifest_path: Path, root: Path) -> dict[str, Any]:
     }
 
 
+def _semantic_declarations(text: str) -> dict[str, bool]:
+    """Find semantic-layer configuration by structure, not by substring.
+
+    Matching `metrics:` at any indentation counts a column named `metrics` as a
+    metric definition. The keys are read at the top of the document, where dbt
+    actually accepts them, and separately under model entries, where teams
+    inline measures and entities.
+    """
+    import project_context
+
+    document, unsupported = project_context.parse_yaml_checked(text)
+    found = {"semantic_models": False, "metrics": False, "saved_queries": False}
+    if not isinstance(document, dict):
+        return {**found, "unsupported_yaml": unsupported}
+    for key in found:
+        value = document.get(key)
+        if isinstance(value, list) and value:
+            found[key] = True
+    models = document.get("models")
+    if isinstance(models, list):
+        for model in models:
+            if isinstance(model, dict) and MODEL_SEMANTIC_KEYS.intersection(model):
+                found["semantic_models"] = True
+    return {**found, "unsupported_yaml": unsupported}
+
+
 def _yaml_summary(path: Path, root: Path) -> dict[str, Any]:
     text = _read_text(path)
+    semantic = _semantic_declarations(text)
     return {
         "path": _relative(path, root),
         "source_blocks": len(re.findall(r"(?m)^\s*sources\s*:", text)),
@@ -222,10 +256,11 @@ def _yaml_summary(path: Path, root: Path) -> dict[str, Any]:
         "test_keys": len(re.findall(r"(?m)^\s*(?:tests|data_tests)\s*:", text)),
         "description_fields": len(re.findall(r"(?m)^\s*description\s*:", text)),
         "column_entries": len(re.findall(r"(?m)^\s*-\s+name\s*:", text)),
-        "contains_exposures": bool(re.search(r"(?m)^\s*exposures\s*:", text)),
-        "contains_metrics": bool(re.search(r"(?m)^\s*metrics\s*:", text)),
-        "contains_semantic_models": bool(re.search(r"(?m)^\s*semantic_models\s*:", text)),
-        "contains_saved_queries": bool(re.search(r"(?m)^\s*saved_queries\s*:", text)),
+        "contains_exposures": bool(re.search(r"(?m)^exposures\s*:", text)),
+        "contains_metrics": semantic["metrics"],
+        "contains_semantic_models": semantic["semantic_models"],
+        "contains_saved_queries": semantic["saved_queries"],
+        "unsupported_yaml": semantic["unsupported_yaml"],
     }
 
 
@@ -245,6 +280,7 @@ def _sql_summary(path: Path, root: Path) -> dict[str, Any]:
     )
     return {
         "path": _relative(path, root),
+        "language": "python" if path.suffix.lower() == ".py" else "sql",
         "line_count": len(text.splitlines()),
         "patterns": pattern_counts,
         "configured_materializations": materializations,
@@ -291,31 +327,46 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
         except OSError as exc:
             project_error = str(exc)
 
-    files = list(_walk_files(root))
+    import project_context
+
+    layout = project_context.DbtProjectLayout(root, project)
+    files: list[Path] = []
+    vendored_file_count = 0
+    for file in _walk_files(root):
+        if layout.is_own_code(file.relative_to(root).as_posix()):
+            files.append(file)
+        elif file.suffix.lower() in {*MODEL_SUFFIXES, ".yml", ".yaml"}:
+            vendored_file_count += 1
     yaml_files = [
         file
         for file in files
         if file.suffix.lower() in {".yml", ".yaml"} and file != project_file
     ]
-    sql_files = [file for file in files if file.suffix.lower() == ".sql"]
 
-    configured_model_paths = (
-        project.get("model-paths") if isinstance(project, dict) else None
-    )
-    if not isinstance(configured_model_paths, list) or not configured_model_paths:
-        configured_model_paths = ["models"]
-    model_roots = {
-        (root / str(model_path)).resolve()
-        for model_path in configured_model_paths
-        if isinstance(model_path, str)
-    }
+    configured_model_paths = list(layout.model_paths)
+    model_roots = {(root / model_path).resolve() for model_path in configured_model_paths}
     model_files = [
         file
-        for file in sql_files
-        if any(model_root == file.parent or model_root in file.parents for model_root in model_roots)
+        for file in files
+        if file.suffix.lower() in MODEL_SUFFIXES
+        and any(
+            model_root == file.parent or model_root in file.parents
+            for model_root in model_roots
+        )
     ]
 
     sql_details = [_sql_summary(file, root) for file in model_files]
+    staging_roots = {
+        (root / model_path / directory).resolve()
+        for model_path in configured_model_paths
+        for directory in ("staging", "stage", "base", "src")
+    }
+    has_staging_layer = any(
+        directory.is_dir() and any(directory.rglob("*.sql")) for directory in staging_roots
+    ) or any(
+        Path(detail["path"]).stem.lower().startswith(("stg_", "staging_", "base_", "src_"))
+        for detail in sql_details
+    )
     yaml_details = [_yaml_summary(file, root) for file in yaml_files]
     lookml_files = [
         _relative(file, root) for file in files if file.suffix.lower() == ".lkml"
@@ -335,17 +386,29 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
             "incremental" in detail["configured_materializations"]
             or detail["patterns"]["is_incremental_calls"] > 0
         )
-        if is_incremental and not detail["has_unique_key_config"]:
+        strategies = {value.lower() for value in detail["incremental_strategies"]}
+        if (
+            is_incremental
+            and not detail["has_unique_key_config"]
+            and not strategies & STRATEGIES_WITHOUT_UNIQUE_KEY
+        ):
             findings.append(
                 {
                     "code": "incremental_without_unique_key",
                     "severity": "warning",
                     "path": detail["path"],
-                    "message": "Incremental model has no explicit unique_key config.",
+                    "message": (
+                        "Incremental model has no explicit unique_key config and no "
+                        "strategy that replaces rows without one."
+                    ),
                 }
             )
+        # Reading a source in a mart is only a violation where the project has a
+        # staging layer to bypass. Flagging it in a project without one reports
+        # the absence of a convention as a breach of it.
         if (
-            "marts" in Path(detail["path"]).parts
+            has_staging_layer
+            and "marts" in Path(detail["path"]).parts
             and detail["patterns"]["source_calls"] > 0
         ):
             findings.append(
@@ -353,7 +416,7 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
                     "code": "raw_source_in_mart",
                     "severity": "warning",
                     "path": detail["path"],
-                    "message": "Mart model references a source directly.",
+                    "message": "Mart model references a source directly, bypassing the staging layer.",
                 }
             )
     for detail in yaml_details:
@@ -367,16 +430,15 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
                 }
             )
 
-    manifests = [
-        file
-        for file in files
-        if file.name == "manifest.json"
-        and (file.parent.name == "target" or file.parent == root)
+    # Artifacts live wherever `target-path` says, and the walk above excludes
+    # that directory as build output, so look it up directly.
+    manifest_candidates = [
+        root / layout.target_path / "manifest.json",
+        root / "manifest.json",
     ]
+    manifest_path = next((item for item in manifest_candidates if item.is_file()), None)
     manifest = (
-        _manifest_summary(manifests[0], root)
-        if manifests
-        else {"present": False}
+        _manifest_summary(manifest_path, root) if manifest_path else {"present": False}
     )
 
     return {
@@ -392,8 +454,19 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
         "model_tree": {
             "configured_paths": configured_model_paths,
             "model_count": len(model_files),
+            "python_model_count": sum(
+                1 for detail in sql_details if detail["language"] == "python"
+            ),
             "directories": dict(sorted(directories.items())),
             "files": [_relative(file, root) for file in model_files],
+        },
+        "layout": layout.as_dict(),
+        "has_staging_layer": has_staging_layer,
+        "excluded_vendored_file_count": vendored_file_count,
+        "unsupported_yaml": {
+            detail["path"]: detail["unsupported_yaml"]
+            for detail in yaml_details
+            if detail["unsupported_yaml"]
         },
         "sql_patterns": dict(sorted(aggregate_patterns.items())),
         "configured_materializations": dict(sorted(materializations.items())),

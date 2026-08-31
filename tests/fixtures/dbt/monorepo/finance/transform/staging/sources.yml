@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: billing
+    schema: raw_billing
+    tables:
+      - name: invoices
+        description: Raw invoices from the billing platform.
+        config:
+          loaded_at_field: _ingested_at
+          freshness:
+            warn_after:
+              count: 6
+              period: hour
+        columns:
+          - name: invoice_id
+            description: Stable invoice identifier.
+      - name: refunds
+        description: Raw refunds from the billing platform.

@@ -181,13 +181,21 @@ def _looks_like_placeholder(value: str, *, quoted: bool = True) -> bool:
     ):
         return True
 
-    # An unquoted value containing a call is code that produces a value, not a
-    # value: `token = uuid.uuid4().hex` is a generated identifier, and
-    # `secret = build_secret()` is a function. A literal secret written without
-    # quotes cannot contain a call, and the formats that do appear unquoted --
-    # JWTs, hex digests, base64 keys -- have no parentheses, so this excludes
-    # expressions without excusing anything that is actually a credential.
-    return not quoted and "(" in value
+    # An unquoted value with expression structure is code that produces a value
+    # rather than a value: a subscript such as tokens[index], a call such as
+    # uuid.uuid4().hex, and an attribute path such as self.config all read a
+    # credential rather than containing one. A literal secret written without
+    # quotes has no call, subscript, or dotted path, and the unquoted formats
+    # that do occur -- hex digests, base64 keys, JWTs -- have dedicated
+    # high-confidence patterns of their own.
+    if quoted:
+        return False
+    stripped = value.strip()
+    return bool(
+        "(" in stripped
+        or "[" in stripped
+        or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", stripped)
+    )
 
 
 def _span_for_match(spec: PatternSpec, match: re.Match[str]) -> tuple[int, int]:
@@ -262,6 +270,55 @@ def findings_for_text(text: str) -> list[dict[str, Any]]:
 def detect_secrets(text: str) -> list[dict[str, Any]]:
     """Public alias returning safe, JSON-serializable secret findings."""
     return findings_for_text(text)
+
+
+# Keys whose presence is itself the finding: a populated `password` field is a
+# credential regardless of whether its value matches any pattern.
+SENSITIVE_KEY = re.compile(
+    r"(?:^|_)(?:api_?key|access_?token|refresh_?token|client_?secret|password|"
+    r"passwd|private_?key|authorization|cookie|secret|credential)(?:$|_)",
+    re.IGNORECASE,
+)
+
+
+def scan_structure(value: Any, path: str = "$") -> list[dict[str, Any]]:
+    """Scan a decoded JSON structure for credentials, by key and by value.
+
+    The cloud gate carried its own smaller copy of these patterns, so a token
+    format added here was still transmitted there. One scanner means one answer,
+    and it keeps reporting locations rather than values.
+    """
+    findings: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_text = str(key)
+            child_path = f"{path}.{key_text}"
+            if SENSITIVE_KEY.search(key_text) and child not in ("", None, [], {}):
+                if not (isinstance(child, str) and _looks_like_placeholder(child)):
+                    findings.append(
+                        {
+                            "path": child_path,
+                            "kind": "sensitive_key",
+                            "confidence": "high",
+                            "value_emitted": False,
+                        }
+                    )
+                    continue
+            findings.extend(scan_structure(child, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            findings.extend(scan_structure(child, f"{path}[{index}]"))
+    elif isinstance(value, str):
+        for finding in findings_for_text(value):
+            findings.append(
+                {
+                    "path": path,
+                    "kind": finding["kind"],
+                    "confidence": finding["confidence"],
+                    "value_emitted": False,
+                }
+            )
+    return findings
 
 
 def redact_text(text: str, replacement: str = "[REDACTED]") -> tuple[str, list[dict[str, Any]]]:

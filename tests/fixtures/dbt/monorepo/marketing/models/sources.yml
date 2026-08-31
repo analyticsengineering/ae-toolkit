@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: ads
+    schema: raw_ads
+    tables:
+      - name: campaigns
+        description: Raw advertising campaigns.

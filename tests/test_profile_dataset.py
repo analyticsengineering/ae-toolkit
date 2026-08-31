@@ -73,6 +73,69 @@ class ProfileDatasetTests(unittest.TestCase):
         self.assertEqual(first.stdout, second.stdout)
         self.assertTrue(json.loads(first.stdout)["ok"])
 
+    def test_a_numeric_personal_column_reports_shape_without_reporting_range(self) -> None:
+        report = profile_dataset.profile_dataset(FIXTURES / "data" / "numeric_pii.csv")
+        columns = {column["name"]: column for column in report["columns"]}
+
+        for name in ("ssn", "annual_salary", "account_balance"):
+            with self.subTest(column=name):
+                self.assertTrue(columns[name]["potential_pii"])
+                self.assertEqual(columns[name]["numeric_range_suppressed"], "potential_pii")
+                self.assertNotIn("numeric_min", columns[name])
+                self.assertNotIn("numeric_max", columns[name])
+                self.assertNotIn("outliers", columns[name])
+
+        # Suppression has to stop somewhere, or the profile stops being useful.
+        self.assertFalse(columns["order_count"]["potential_pii"])
+        self.assertEqual(columns["order_count"]["numeric_max"], 11.0)
+        self.assertFalse(columns["customer_id"]["potential_pii"])
+
+    def test_a_sentinel_is_reported_as_a_sentinel_and_not_counted_as_a_null(self) -> None:
+        report = profile_dataset.profile_dataset(FIXTURES / "data" / "null_sentinels.csv")
+        columns = {column["name"]: column for column in report["columns"]}
+
+        status = columns["status"]
+        self.assertEqual(status["null_count"], 0, "no cell in this column is empty")
+        self.assertEqual(status["sentinel_null_count"], 3)
+        self.assertEqual(set(status["sentinel_null_values"]), {"-", "N/A", "unknown"})
+        self.assertEqual(status["missing_count"], 3)
+
+        shipped = columns["shipped_at"]
+        self.assertEqual(shipped["null_count"], 1, "one cell is genuinely empty")
+        self.assertEqual(shipped["sentinel_null_count"], 2)
+        self.assertEqual(shipped["missing_count"], 3)
+
+    def test_duplicate_and_blank_headers_are_renamed_on_the_record(self) -> None:
+        report = profile_dataset.profile_dataset(
+            FIXTURES / "data" / "duplicate_and_blank_headers.csv"
+        )
+        names = [column["name"] for column in report["columns"]]
+        normalizations = {
+            entry["renamed_to"]: entry for entry in report["header_normalizations"]
+        }
+
+        self.assertEqual(names, ["order_id", "amount", "column_3", "amount_2", "column_5"])
+        self.assertEqual(normalizations["amount_2"]["reason"], "duplicate_header")
+        self.assertEqual(normalizations["amount_2"]["original"], "amount")
+        self.assertEqual(normalizations["column_3"]["reason"], "blank_header")
+
+    def test_two_plausible_record_arrays_are_a_question_not_a_guess(self) -> None:
+        path = FIXTURES / "data" / "two_record_arrays.json"
+
+        with self.assertRaises(profile_dataset.ProfileError) as raised:
+            profile_dataset.profile_dataset(path)
+        message = str(raised.exception)
+        self.assertIn("orders", message)
+        self.assertIn("customers", message)
+        self.assertIn("--record-path", message)
+
+        chosen = profile_dataset.profile_dataset(path, record_path="customers")
+        self.assertEqual(chosen["record_path"], "customers")
+        self.assertEqual(chosen["row_count"], 3)
+        self.assertEqual(
+            [column["name"] for column in chosen["columns"]], ["customer_id", "region"]
+        )
+
     def test_invalid_jsonl_fails_with_actionable_error(self) -> None:
         with self.assertRaises(profile_dataset.ProfileError):
             profile_dataset.load_dataset(

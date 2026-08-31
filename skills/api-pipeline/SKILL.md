@@ -42,9 +42,9 @@ Default silently to Work mode and produce an implementation-ready architecture a
 7. Define update/delete semantics, deduplication key, event versus extraction time, late data, and backfill isolation.
 8. Threat-model secret handling, least privilege, logging redaction, data minimization, retention, and vendor terms.
 9. Define tests, metrics, alerts, runbooks, cost controls, deployment, and rollback.
-10. Only after approval of architecture and unresolved tradeoffs, produce implementation steps or code.
+10. Produce implementation steps or code once the design is settled. A request to build the pipeline authorizes reversible local edits under the repository write policy; a correctness-critical contract the documentation leaves open is asked about first, and named as an assumption if the work proceeds around it.
 
-Documentation inspection is read-only. Calling the API, connected services, secret managers, clouds, warehouses, or deployment systems requires an explicit user trigger; obtain approval before any request that may consume quota, reveal data, create resources, or mutate state.
+Documentation inspection is read-only. Writing extractor, schema, and orchestration code locally is reversible and follows the ordinary write rules: new files land, edits to existing files are shown and approved. Running the pipeline is not: calling the API, connected services, secret managers, clouds, warehouses, or deployment systems requires an explicit user trigger, and approval before any request that may consume quota, reveal data, create resources, or mutate state.
 
 ## Decision framework
 

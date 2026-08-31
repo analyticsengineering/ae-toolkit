@@ -107,7 +107,23 @@ class CloudDataGateTests(unittest.TestCase):
     def test_string_tool_input_is_parsed_and_content_fields_are_named(self) -> None:
         parsed = cloud_data_gate.parse_tool_input('{"dataset": "orders"}')
         self.assertEqual(parsed, {"dataset": "orders"})
-        self.assertEqual(cloud_data_gate.content_fields(parsed), ["$.dataset"])
+        self.assertEqual(cloud_data_gate.content_fields(parsed), (["$.dataset"], False))
+
+    def test_a_preview_that_cannot_show_everything_says_so(self) -> None:
+        payload = {"rows": [{"sql": f"select {index}"} for index in range(50)]}
+        fields, truncated = cloud_data_gate.content_fields(payload)
+
+        self.assertTrue(truncated, "a walk that stopped early must report that it did")
+        self.assertEqual(len(fields), cloud_data_gate.PREVIEW_LIST_LIMIT)
+        self.assertEqual(cloud_data_gate.payload_shape(payload), "object with 1 top-level fields")
+
+    def test_the_cloud_gate_uses_the_canonical_secret_scanner(self) -> None:
+        token = "gh" + "p_" + ("C" * 32)
+        self.assertEqual(
+            cloud_data_gate.find_secret({"notes": {"body": f"token {token}"}}),
+            "$.notes.body",
+        )
+        self.assertEqual(cloud_data_gate.find_secret({"api_key": "your_api_key"}), None)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,45 @@
+{
+  "metadata": {"dbt_version": "1.10.0", "project_name": "finance"},
+  "nodes": {
+    "model.finance.stg_invoices": {
+      "name": "stg_invoices",
+      "resource_type": "model",
+      "package_name": "finance",
+      "depends_on": {"nodes": ["source.finance.billing.invoices"]}
+    },
+    "model.finance.fct_revenue.v2": {
+      "name": "fct_revenue",
+      "resource_type": "model",
+      "package_name": "finance",
+      "version": 2,
+      "depends_on": {"nodes": ["model.finance.stg_invoices"]}
+    },
+    "model.finance.fct_customer_ltv": {
+      "name": "fct_customer_ltv",
+      "resource_type": "model",
+      "package_name": "finance",
+      "language": "python",
+      "depends_on": {"nodes": ["model.finance.fct_revenue.v2", "model.finance.stg_invoices"]}
+    },
+    "test.finance.assert_revenue_is_not_negative": {
+      "name": "assert_revenue_is_not_negative",
+      "resource_type": "test",
+      "package_name": "finance",
+      "depends_on": {"nodes": ["model.finance.fct_revenue.v2"]}
+    }
+  },
+  "sources": {
+    "source.finance.billing.invoices": {
+      "name": "invoices",
+      "source_name": "billing",
+      "resource_type": "source",
+      "package_name": "finance"
+    }
+  },
+  "child_map": {
+    "model.finance.stg_invoices": ["model.finance.fct_revenue.v2", "model.finance.fct_customer_ltv"],
+    "model.finance.fct_revenue.v2": ["model.finance.fct_customer_ltv", "test.finance.assert_revenue_is_not_negative"],
+    "model.finance.fct_customer_ltv": [],
+    "source.finance.billing.invoices": ["model.finance.stg_invoices"]
+  }
+}

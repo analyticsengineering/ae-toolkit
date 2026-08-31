@@ -1,0 +1,12 @@
+{
+  "orders": [
+    {"order_id": 1, "customer_id": 10, "amount": 25.5},
+    {"order_id": 2, "customer_id": 11, "amount": 40.0},
+    {"order_id": 3, "customer_id": 10, "amount": 12.75}
+  ],
+  "customers": [
+    {"customer_id": 10, "region": "west"},
+    {"customer_id": 11, "region": "east"},
+    {"customer_id": 12, "region": "north"}
+  ]
+}

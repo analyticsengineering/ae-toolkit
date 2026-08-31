@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from collections import Counter
@@ -48,12 +49,19 @@ NON_ADAPTER_PACKAGES = {"core", "common", "adapters", "extractor", "artifacts", 
 
 # Configuration keys only one warehouse accepts. Weaker than a pinned adapter,
 # since a key can survive a migration, so this is consulted last.
+#
+# `partition_by` and `cluster_by` are deliberately absent. Snowflake, Databricks,
+# Spark, and Athena all accept one or both, so naming BigQuery from them was a
+# guess dressed as evidence, and a wrong warehouse produces SQL that cannot run.
 DIALECT_FINGERPRINTS = (
     ("snowflake", re.compile(r"(?m)^\s*\+?(?:snowflake_warehouse|query_tag|transient)\s*:", re.I)),
-    ("bigquery", re.compile(r"(?m)^\s*\+?(?:partition_by|cluster_by|require_partition_filter|hours_to_expiration)\s*:", re.I)),
-    ("databricks", re.compile(r"(?m)^\s*\+?(?:file_format|liquid_clustered_by|databricks_compute|tblproperties)\s*:", re.I)),
-    ("redshift", re.compile(r"(?m)^\s*\+?(?:dist|sort|sort_type|bind)\s*:", re.I)),
+    ("bigquery", re.compile(r"(?m)^\s*\+?(?:require_partition_filter|hours_to_expiration|kms_key_name)\s*:", re.I)),
+    ("databricks", re.compile(r"(?m)^\s*\+?(?:liquid_clustered_by|databricks_compute|tblproperties)\s*:", re.I)),
+    ("redshift", re.compile(r"(?m)^\s*\+?(?:dist|sort_type|bind)\s*:", re.I)),
 )
+# Column-name shapes that identify a row rather than describe it. A unique test
+# on anything else is a constraint, not a declaration of grain.
+KEY_COLUMN = re.compile(r"(?:^id$|_id$|_key$|_sk$|_pk$|^sk_|^pk_)", re.I)
 
 SURROGATE_KEY_PATTERNS = (
     ("dbt_utils.generate_surrogate_key", re.compile(r"dbt_utils\s*\.\s*generate_surrogate_key", re.I)),
@@ -397,6 +405,10 @@ def _observe_models(root: Path, model_paths: list[str], tallies: dict[str, Tally
         if key_label:
             tallies["surrogate_key.macro"].add(key_label, relative)
 
+        if path.suffix.lower() == ".py":
+            # A Python model has no SQL to style and no Jinja incremental block.
+            # Measuring it would dilute the SQL evidence with zeros.
+            continue
         _observe_incremental(text, relative, tallies)
         _observe_sql_style(text, relative, tallies)
 
@@ -453,6 +465,32 @@ def _observe_incremental(text: str, relative: str, tallies: dict[str, Tally]) ->
             tallies["incremental.filter_timestamp"].add(timestamp.group(1), relative)
 
 
+def _indent_step(lines: Sequence[str]) -> int | None:
+    """Infer the indent unit from the widths that actually carry the structure.
+
+    Taking the smallest indented line let one continuation aligned to a single
+    space declare the project's indent width as 1. Widths that appear on only a
+    handful of lines are dropped, and the unit is the greatest common divisor of
+    what remains, so a file indented 4/8/12 reports 4 rather than 12.
+    """
+    indents = Counter(
+        len(line) - len(line.lstrip(" "))
+        for line in lines
+        if line.startswith(" ") and line.strip()
+    )
+    positive = {width: count for width, count in indents.items() if width > 0}
+    if not positive:
+        return None
+    total = sum(positive.values())
+    dominant = [width for width, count in positive.items() if count / total >= 0.1]
+    if not dominant:
+        dominant = [max(positive, key=lambda width: (positive[width], -width))]
+    step = dominant[0]
+    for width in dominant[1:]:
+        step = math.gcd(step, width)
+    return step or None
+
+
 def _observe_sql_style(text: str, relative: str, tallies: dict[str, Tally]) -> None:
     lines = text.splitlines()
     leading = sum(1 for line in lines if re.match(r"^\s+,\s*\S", line))
@@ -468,15 +506,9 @@ def _observe_sql_style(text: str, relative: str, tallies: dict[str, Tally]) -> N
     has_cte = bool(re.search(r"(?im)^\s*with\s+[\w`\"]+\s+as\s*\(", text))
     tallies["sql.ctes"].add("true" if has_cte else "false", relative)
 
-    indents = Counter(
-        len(line) - len(line.lstrip(" "))
-        for line in lines
-        if line.startswith(" ") and line.strip()
-    )
-    positive = [(width, count) for width, count in indents.items() if width > 0]
-    if positive:
-        width = min(width for width, _ in positive)
-        tallies["sql.indent_width"].add(str(width), relative)
+    step = _indent_step(lines)
+    if step:
+        tallies["sql.indent_width"].add(str(step), relative)
 
 
 def _documented_models(document: Any) -> list[dict[str, Any]]:
@@ -501,6 +533,34 @@ def _column_tests(column: dict[str, Any]) -> tuple[list[str], str | None]:
                 names.extend(str(item) for item in entry)
         return names, key
     return [], None
+
+
+def _relationship_candidates(
+    model_name: str,
+    columns: Sequence[Any],
+) -> list[tuple[str, list[str]]]:
+    """Foreign-key columns that could carry a relationships test.
+
+    Coverage was previously measured per model: one model with three untested
+    foreign keys counted the same as one with a single tested key. Measuring per
+    candidate column is what makes the resulting percentage mean anything.
+    """
+    candidates: list[tuple[str, list[str]]] = []
+    for column in columns:
+        if not isinstance(column, dict) or not column.get("name"):
+            continue
+        name = str(column["name"])
+        if not KEY_COLUMN.search(name):
+            continue
+        tests, _key = _column_tests(column)
+        # The model's own key is not a foreign key into anything.
+        if "unique" in tests:
+            continue
+        entity = re.sub(r"^(?:stg|int|fct|dim|f|d)_", "", model_name, flags=re.I).rstrip("s")
+        if name.lower() in {f"{entity.lower()}_id", f"{entity.lower()}_key", "id"}:
+            continue
+        candidates.append((name, tests))
+    return candidates
 
 
 def _observe_yaml(
@@ -535,12 +595,12 @@ def _observe_yaml(
                 relative if described_here else previous_path,
             )
             columns = model.get("columns") if isinstance(model.get("columns"), list) else []
-            identifier_columns = 0
-            has_relationship = False
+            unique_columns: list[tuple[str, list[str]]] = []
             for column in columns:
                 if not isinstance(column, dict) or not column.get("name"):
                     continue
                 declared_columns += 1
+                column_name = str(column["name"])
                 column_description = column.get("description")
                 if isinstance(column_description, str) and column_description.strip():
                     described_columns += 1
@@ -551,15 +611,22 @@ def _observe_yaml(
                 tests, key_name = _column_tests(column)
                 if key_name:
                     tallies["tests.key"].add(key_name, relative)
-                if str(column["name"]).endswith("_id"):
-                    identifier_columns += 1
-                if "relationships" in tests:
-                    has_relationship = True
                 if "unique" in tests:
-                    label = "not_null+unique" if "not_null" in tests else "unique"
-                    tallies["tests.primary_key"].add(label, relative)
-            if identifier_columns > 1:
-                tallies["tests.relationships"].add("true" if has_relationship else "false", relative)
+                    unique_columns.append((column_name, tests))
+
+            for column_name, tests in _relationship_candidates(model_name, columns):
+                tallies["tests.relationships"].add(
+                    "true" if "relationships" in tests else "false",
+                    f"{relative}#{model_name}.{column_name}",
+                )
+
+            # A unique test states a constraint. It states the grain only when
+            # exactly one key-shaped column carries it; two unique columns mean
+            # the file has not said which one identifies a row.
+            if len(unique_columns) == 1 and KEY_COLUMN.search(unique_columns[0][0]):
+                tests = unique_columns[0][1]
+                label = "not_null+unique" if "not_null" in tests else "unique"
+                tallies["tests.primary_key"].add(label, relative)
 
         if isinstance(document, dict) and isinstance(document.get("sources"), list):
             for source in document["sources"]:
@@ -753,8 +820,31 @@ def _detect_adapter(root: Path) -> tuple[str | None, str | None]:
         matched = sorted({name for name, pattern in DIALECT_FINGERPRINTS if pattern.search(text)})
         if len(matched) == 1:
             return matched[0], "dbt_project.yml configuration keys"
+        if len(matched) > 1:
+            return None, (
+                "dbt_project.yml configuration keys point at more than one warehouse: "
+                + ", ".join(matched)
+            )
 
     return None, None
+
+
+def _adapter_confidence(source: str | None) -> str:
+    """How much weight the adapter evidence can carry.
+
+    A committed profile or a pinned adapter package states the warehouse. A
+    configuration key only suggests it, because keys outlive the migrations that
+    left them behind, so downstream SQL generation must treat it as provisional.
+    """
+    if not source:
+        return "none"
+    if "more than one" in source:
+        return "none"
+    if source == "profiles.yml":
+        return "high"
+    if source.endswith((".txt", ".toml", ".py")):
+        return "high"
+    return "medium"
 
 
 def _profile_fingerprint(root: Path, paths: Iterable[str]) -> str:
@@ -770,25 +860,32 @@ def _profile_fingerprint(root: Path, paths: Iterable[str]) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def _repository_context(root: Path, yaml_paths: list[str]) -> dict[str, Any]:
+def _repository_context(
+    root: Path,
+    yaml_paths: list[str],
+    is_own_code: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
+    own = is_own_code or _is_own_code
     lookml_files = [
         path
         for path in inspect_dbt._walk_files(root)
-        if path.suffix.lower() == ".lkml" and _is_own_code(path.relative_to(root).as_posix())
+        if path.suffix.lower() == ".lkml" and own(path.relative_to(root).as_posix())
     ]
     semantic_files = 0
     metric_files = 0
     saved_query_files = 0
     for relative in yaml_paths:
-        text = inspect_dbt._read_text(root / relative)
-        semantic_files += int(bool(re.search(r"(?m)^\s*semantic_models\s*:", text)))
-        metric_files += int(bool(re.search(r"(?m)^\s*metrics\s*:", text)))
-        saved_query_files += int(bool(re.search(r"(?m)^\s*saved_queries\s*:", text)))
+        declared = inspect_dbt._semantic_declarations(
+            inspect_dbt._read_text(root / relative)
+        )
+        semantic_files += int(declared["semantic_models"])
+        metric_files += int(declared["metrics"])
+        saved_query_files += int(declared["saved_queries"])
 
     orchestration: list[str] = []
     for path in inspect_dbt._walk_files(root):
         relative = path.relative_to(root).as_posix()
-        if not _is_own_code(relative):
+        if not own(relative):
             continue
         lowered = relative.lower()
         if lowered in {"dbt_cloud.yml", "dbt_cloud.yaml"}:
@@ -847,6 +944,7 @@ def _project_facts(
     report: dict[str, Any],
     model_paths: list[str],
     yaml_paths: list[str],
+    is_own_code: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     project = report.get("project") if isinstance(report.get("project"), dict) else {}
     adapter, adapter_source = _detect_adapter(root)
@@ -878,10 +976,11 @@ def _project_facts(
         "transformation": "dbt",
         "adapter": adapter,
         "adapter_source": adapter_source,
+        "adapter_confidence": _adapter_confidence(adapter_source),
         "packages": sorted(set(packages)),
         "profile_fingerprint": _profile_fingerprint(root, fingerprint_inputs),
     }
-    facts.update(_repository_context(root, yaml_paths))
+    facts.update(_repository_context(root, yaml_paths, is_own_code))
     return facts
 
 
@@ -904,13 +1003,16 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
             "inference_note": "No dbt_project.yml found; no conventions were inferred.",
         }
 
-    model_paths = [path for path in report["model_tree"]["files"] if _is_own_code(path)]
-    yaml_paths = [
-        detail["path"] for detail in report["yaml_files"] if _is_own_code(detail["path"])
-    ]
-    vendored_count = (
-        len(report["model_tree"]["files"]) + len(report["yaml_files"])
-    ) - (len(model_paths) + len(yaml_paths))
+    import project_context
+
+    layout = project_context.DbtProjectLayout(root, report.get("project"))
+    own = layout.is_own_code
+    model_paths = [path for path in report["model_tree"]["files"] if own(path)]
+    yaml_paths = [detail["path"] for detail in report["yaml_files"] if own(detail["path"])]
+    vendored_count = report.get("excluded_vendored_file_count", 0) + (
+        (len(report["model_tree"]["files"]) + len(report["yaml_files"]))
+        - (len(model_paths) + len(yaml_paths))
+    )
 
     tallies = _tallies()
     _observe_models(root, model_paths, tallies)
@@ -945,7 +1047,7 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
                 }
             )
 
-    facts = _project_facts(root, report, model_paths, yaml_paths)
+    facts = _project_facts(root, report, model_paths, yaml_paths, own)
     facts.update(
         {
             "model_count": len(model_paths),

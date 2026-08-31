@@ -1,0 +1,4 @@
+name: marketing
+version: '1.4'
+config-version: 2
+model-paths: [models]
