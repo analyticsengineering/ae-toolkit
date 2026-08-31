@@ -249,6 +249,8 @@ V1 is deliberately conservative:
 
 Hooks are defense in depth, not a security sandbox. Review every command and use least-privilege, non-production credentials. See [SECURITY.md](SECURITY.md).
 
+How a host treats a hook that cannot run is the host's decision, not the plugin's, and it differs. The Cursor hook configuration declares `failClosed`, so a gate that cannot execute blocks the call it was meant to gate. VS Code and Antigravity expose no equivalent setting, so a gate that fails to launch there leaves the call ungated rather than blocking it. The gates themselves fail closed on every host once they do run, including on unreadable or unrecognized payloads. Two consequences are worth acting on: install with `scripts/install_target.py`, which stamps absolute hook paths so a session started in a subdirectory still finds the gate, and keep `python3` available, because on these two hosts an absent interpreter silently removes the gate instead of stopping the work.
+
 ## Scripts
 
 The plugin's executable support is standard-library Python and intentionally read-only:

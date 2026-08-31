@@ -183,6 +183,75 @@ class DayToDayWorkflowContractTests(unittest.TestCase):
             with self.subTest(risky_skill=name):
                 self.assertIn("approval", self.skill(name))
 
+    def test_every_convention_dependent_skill_names_the_inference_command(self) -> None:
+        """A workflow that only alludes to inference tends to skip it.
+
+        "Use static convention inference" reads like an instruction but names
+        nothing to run, so the agent substitutes glancing at a couple of files and
+        then guesses a prefix the repository could have told it. The script is what
+        produces the support counts these skills report, so each one has to name it.
+        """
+        for name in (
+            "source-setup",
+            "model-documentation",
+            "model-tests",
+            "yaml-maintenance",
+            "refactor-model",
+            "rename-model",
+            "migration-plan",
+            "incremental-model",
+        ):
+            with self.subTest(skill=name):
+                self.assertIn("scripts/infer_conventions.py", self.skill(name))
+
+    def test_a_non_dbt_repository_does_not_become_a_dbt_one(self) -> None:
+        """Empty inference means the project is not dbt, not that it has no conventions."""
+        conventions = (PLUGIN_ROOT / "rules" / "ae-conventions.mdc").read_text(
+            encoding="utf-8"
+        ).lower()
+        self.assertIn("is_dbt_project", conventions)
+        self.assertIn("inspect_repo.py", conventions)
+        self.assertIn("ref()", conventions)
+
+    def test_creation_commands_do_not_stack_a_review_persona(self) -> None:
+        """Stacking the reviewer onto a build turns "write this model" into an audit.
+
+        The reviewer agent requires Evidence/Risk/Recommendation/Verification with
+        severity and confidence on every finding, which is right for a review and
+        directly contradicts the Changed/Why/Verified contract these commands
+        promise. Whichever one wins, the user gets the other one's format.
+        """
+        for name in ("ae-build-model", "ae-trace", "ae-learn"):
+            body = (PLUGIN_ROOT / "commands" / f"{name}.md").read_text(encoding="utf-8")
+            with self.subTest(command=name):
+                self.assertNotIn("senior-ae-reviewer", body)
+
+        for name in ("ae-review-sql", "ae-review-model", "ae-pr-review", "ae-dbt-health"):
+            body = (PLUGIN_ROOT / "commands" / f"{name}.md").read_text(encoding="utf-8")
+            with self.subTest(review_command=name):
+                self.assertIn("senior-ae-reviewer", body)
+
+    def test_static_dbt_commands_are_governed_consistently(self) -> None:
+        """`dbt parse` was banned in one workflow and used in another.
+
+        It costs nothing and touches no warehouse, so the audit's reason for
+        declining it is that regenerating artifacts would change the evidence
+        under review, not that the command is dangerous. Saying that plainly is
+        what stops the toolkit from looking arbitrary across two workflows.
+        """
+        health = self.skill("dbt-health")
+        self.assertIn("dbt parse", health)
+        self.assertIn("static", health)
+        self.assertIn("initiative", health)
+        self.assertIn("dbt parse", self.skill("validate-dbt"))
+
+    def test_review_length_follows_the_change_not_the_template(self) -> None:
+        for name in ("sql-review", "data-model-review"):
+            with self.subTest(skill=name):
+                text = self.skill(name)
+                self.assertIn("omit the heading", text)
+                self.assertIn("formal review", text)
+
     def test_project_profile_persistence_is_opt_in(self) -> None:
         conventions = (PLUGIN_ROOT / "rules" / "ae-conventions.mdc").read_text(
             encoding="utf-8"

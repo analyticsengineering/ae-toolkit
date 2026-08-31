@@ -35,7 +35,9 @@ Default silently to Work mode and prioritize remediations by reliability impact.
 8. Check whether models reading mutable or concurrently updated sources share a reproducible extraction/run boundary; comments describing a downstream release process are intent, not proof that the boundary exists.
 9. Propose the smallest targeted commands needed to fill gaps. Show exact selectors, target, and purpose.
 
-Never run `dbt build`, `dbt run`, `dbt test`, `dbt compile`, `dbt parse`, `dbt deps`, or warehouse-backed commands merely because they are available. Execution and connected warehouse functionality require an explicit user trigger; confirm target and obtain approval when cost, mutation, dependency installation, or production access is possible.
+Never run `dbt build`, `dbt run`, `dbt test`, `dbt compile`, `dbt parse`, `dbt deps`, or warehouse-backed commands merely because they are available. An audit reads what the project already produced; it does not generate fresh artifacts to read.
+
+Two boundaries are doing different work here, and conflating them produces a teammate who refuses a harmless command in one workflow and runs it in another. `dbt parse` and `dbt ls` are static: they touch no warehouse and cost nothing, and `validate-dbt` runs them one at a time to confirm a selector resolves. What this audit declines is not their risk but their initiative, because regenerating the manifest changes the evidence being audited. When artifacts are missing or too stale to support a finding, say so, name `dbt parse` as the command that would fix it, and let the user trigger it, rather than reporting a gap you could have offered to close. Everything warehouse-backed keeps its own approval and target confirmation regardless of who asked.
 
 ## Decision framework
 

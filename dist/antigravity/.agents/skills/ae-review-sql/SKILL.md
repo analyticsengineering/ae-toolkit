@@ -2,6 +2,8 @@
 name: ae-review-sql
 description: Review analytical SQL for correctness, grain, safety, maintainability, performance, and test coverage.
 ---
+This is the `ae-review-sql` alias of the `sql-review` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Review Analytical SQL
 
 Apply the `sql-review` skill workflow and the `senior-ae-reviewer` agent perspective.

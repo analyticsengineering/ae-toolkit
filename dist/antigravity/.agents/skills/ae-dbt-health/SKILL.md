@@ -2,6 +2,8 @@
 name: ae-dbt-health
 description: Assess local dbt project health across structure, dependencies, tests, documentation, and operational risk.
 ---
+This is the `ae-dbt-health` alias of the `dbt-health` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Assess dbt Project Health
 
 Apply the `dbt-health` skill workflow and the `senior-ae-reviewer` agent perspective.

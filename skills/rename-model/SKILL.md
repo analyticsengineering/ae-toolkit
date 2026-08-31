@@ -22,7 +22,7 @@ Obtain the old identity, intended new identity, project root, desired compatibil
 
 ## Procedure
 
-1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run the local static convention-inference script. Record naming, model paths, YAML layout, alias patterns, adapter, and transformation tool with evidence strength.
+1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json`. Record naming, model paths, YAML layout, alias patterns, adapter, and transformation tool with evidence strength.
 2. Read the model, configuration, documentation, tests, macros, and project configuration that establish its logical name, physical relation, aliases, schemas, and database.
 3. Confirm the rename does not also change grain, rows, columns, types, meanings, keys, materialization, or freshness. Route intentional contract changes to `migration-plan`.
 4. Trace upstream and downstream identities using both logical and physical names. Search:

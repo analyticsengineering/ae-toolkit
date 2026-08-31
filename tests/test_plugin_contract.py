@@ -295,11 +295,45 @@ class RuntimeConfigurationTests(unittest.TestCase):
                 "#!/usr/bin/env python3",
             )
 
+    def test_reading_a_credential_is_not_reported_as_holding_one(self) -> None:
+        """Flagging `api_key=os.environ[...]` teaches people to ignore the scanner.
+
+        The gate uses these findings to decide whether content is safe to send, so
+        a detector that fires on the correct way to handle a secret produces
+        warnings on files that deserve trust, and the habit it builds is the
+        problem: a reader who dismisses the noise dismisses the real finding too.
+        Literal secrets must still be caught, which is why both halves are asserted
+        together.
+        """
+        redactor = load_module("scripts/redact_secrets.py", "redactor_under_test")
+        for safe in (
+            'api_key=os.environ["CURSOR_API_KEY"]',
+            'api_key = os.getenv("SERVICE_KEY")',
+            "token: process.env.TOKEN",
+            'password = "<your-password>"',
+        ):
+            with self.subTest(safe=safe):
+                self.assertEqual([], redactor.findings_for_text(safe))
+
+        # Assembled at runtime so the repository-wide scan below does not flag this
+        # file for carrying the examples that prove the scan works.
+        for unsafe in (
+            "password = " + '"hunter" + "2xyz"'.replace('" + "', ""),
+            "api_key: " + '"sk' + "_live_ABCDEFGHIJKLMNOP" + '"',
+            "client_secret=" + "aB3xY9zQ" + "1mN7pL2k",
+        ):
+            with self.subTest(unsafe=unsafe):
+                self.assertTrue(redactor.findings_for_text(unsafe), f"missed {unsafe!r}")
+
     def test_distributed_text_contains_no_obvious_secret_values(self) -> None:
         redactor = load_module("scripts/redact_secrets.py", "contract_redactor")
         excluded_suffixes = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"}
-        # Git internals are not distributed content and are largely binary.
-        excluded_dirs = {"__pycache__", ".git"}
+        # None of these are distributed content. Third-party dependencies in
+        # particular carry thousands of credential-shaped strings in their own
+        # tests and docs, and letting them into this scan produces a failure list
+        # long enough that nobody reads it -- which costs exactly the signal the
+        # test exists to give.
+        excluded_dirs = {"__pycache__", ".git", ".venv", "venv", "node_modules", "runs"}
         findings: dict[str, list[dict[str, object]]] = {}
 
         for path in PLUGIN_ROOT.rglob("*"):

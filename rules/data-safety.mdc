@@ -12,7 +12,7 @@ alwaysApply: true
 - The `validate-dbt` workflow may run one bounded `dbt compile`, `test`, `run`, or `build` command after preview and explicit approval against a named local/development target. It never infers a target, runs globally, uses `--full-refresh`, or validates against production. This exception covers dbt-managed development objects only; it does not permit direct database mutation statements.
 - Connected Advanced behavior requires an explicit user trigger, successful authentication, destination and content preview, best-effort `scripts/redact_secrets.py` inspection, and explicit approval before access or transmission.
 - Use least privilege, report what was accessed or sent, and verify the result. If a gate fails, stay local.
-- Read and follow `references/privacy.md` for detailed handling.
+- Read and follow `${CURSOR_PLUGIN_ROOT}/references/privacy.md` for detailed handling.
 - Scope is analytics engineering only. Exclude frontend, generic backend, SEO, DevOps, and general app work.
 
 ## Repository writes

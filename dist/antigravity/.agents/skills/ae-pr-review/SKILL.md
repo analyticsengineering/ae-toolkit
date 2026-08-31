@@ -2,6 +2,8 @@
 name: ae-pr-review
 description: Review an analytics-engineering pull request for correctness, impact, safety, and adequate verification.
 ---
+This is the `ae-pr-review` alias of the `pr-review` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Review an Analytics Engineering Pull Request
 
 Apply the `pr-review` skill workflow and the `senior-ae-reviewer` agent perspective.

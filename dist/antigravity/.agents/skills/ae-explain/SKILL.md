@@ -2,6 +2,8 @@
 name: ae-explain
 description: Explain analytical SQL, dbt, data models, or pipeline logic at the user's requested depth.
 ---
+This is the `ae-explain` alias of the `explain-data-code` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Explain Analytics Engineering Code
 
 Apply the `explain-data-code` skill workflow and, for exercises, the `learning-coach` agent perspective.

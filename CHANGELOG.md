@@ -6,17 +6,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Changed
-
-- Creation and editing workflows now report `Changed`, `Why`, `Verified`, and `Remaining uncertainty` instead of exposing Work mode or review-framework fields.
-- Explicit requests authorize reversible project-owned SQL, YAML, documentation, test, and local analytics configuration edits. Renames, deletions, breaking contracts, broad migrations, infrastructure/data access, external transmission, and destructive actions retain risk-based gates.
-- Convention inference is ephemeral by default; `.ae/project.yml` is persisted only when the user explicitly asks to save or share a project profile.
+## [1.2.1] - 2026-08-31
 
 ### Fixed
 
 - Validation planning distinguishes formatting/comment, description-only, test-only, contract, rename/delete, and semantic/metric YAML changes so harmless metadata edits no longer select downstream models.
 - Validation planning now recommends intent from the changed resource type and omits a broader warehouse command for metadata-only or test-only changes unless the caller explicitly overrides the safeguard.
 - A request to skip the impact analysis, or to apply a rename mechanically, no longer downgrades a published contract change to an ordinary reversible edit. Renaming a published column now names its semantic, BI, exposure, orchestration, and external consumers and waits for approval regardless of how the request was phrased.
+- Reference documents named in the always-applied rules, the reviewer and pipeline agents, and the freshness workflow now resolve on every host. They were written as bare paths such as `references/privacy.md`, which pointed at the user's own repository rather than the toolkit, so the privacy handling, severity scale, terminology, and warehouse-portability guidance were unreachable wherever those files did not happen to exist. The rule still read as enforced while the document it delegates to was missing.
+- Generation retargets reference paths as well as script paths, and a test now rejects any runtime path that resolves neither beside its own document nor under the shipped toolkit root.
+- The secret detector no longer reports `api_key=os.environ[...]` as a hardcoded credential. Flagging the correct way to handle a secret produced warnings on the files most deserving of trust, and the habit that builds is the real cost.
+
+### Changed
+
+- Creation and editing workflows now report `Changed`, `Why`, `Verified`, and `Remaining uncertainty` instead of exposing Work mode or review-framework fields.
+- Explicit requests authorize reversible project-owned SQL, YAML, documentation, test, and local analytics configuration edits. Renames, deletions, breaking contracts, broad migrations, infrastructure/data access, external transmission, and destructive actions retain risk-based gates.
+- Convention inference is ephemeral by default; `.ae/project.yml` is persisted only when the user explicitly asks to save or share a project profile.
+- Convention-dependent workflows name the inference script instead of alluding to "static convention inference", so the support counts they report come from something that actually ran.
+- A repository that is not dbt is treated as a repository with its own conventions rather than one with none. Empty dbt inference now routes to repository inspection, and `ref()`, `schema.yml`, and dbt directory layout are not introduced into a project that has none.
+- `/ae-build-model`, `/ae-trace`, and `/ae-learn` no longer stack the reviewer persona onto creation and explanation work; its Evidence/Risk/Recommendation/Verification framing contradicted the Changed/Why/Verified contract those commands promise. Review commands keep it.
+- On Antigravity, where commands are also model-invocable, each command alias now names the canonical skill it fronts, so routing to the shorter entry cannot deliver less work than the skill it duplicates.
+- `dbt-health` and `validate-dbt` now agree about `dbt parse`. The audit declines it because regenerating artifacts changes the evidence under review, not because the command is risky, and it says so instead of reading as an arbitrary rule that the other workflow ignores.
+- SQL and data-model reviews collapse empty sections on small changes and keep every section for pull requests, published contracts, and explicitly requested formal reviews.
+- The README states the fail-closed behavior each host actually provides. Cursor declares `failClosed`; VS Code and Antigravity expose no equivalent, so a gate that cannot launch there leaves the call ungated rather than blocking it.
+
+### Unchanged by intent
+
+- Renames, deletions, and published column changes remain preview-and-approval operations. No low-blast-radius auto-proceed exception was added.
 
 ## [1.2.0] - 2026-08-31
 

@@ -55,7 +55,7 @@ Maintain a ledger with evidence class, exact file, embedded timestamp, environme
 
 For every derived duration, show start, end, time zone, formula, and units. For historical rates or percentiles, state the run population and denominator; if multiple comparable observations are absent, do not invent a trend.
 
-Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `${CURSOR_PLUGIN_ROOT}/references/severity-model.md`.
 
 ## Failure modes
 

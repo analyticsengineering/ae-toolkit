@@ -133,8 +133,13 @@ def retarget(text: str, target: Target) -> str:
     return text.replace(PLUGIN_ROOT_TOKEN, target.shared_root)
 
 
+def shipped_references() -> frozenset[str]:
+    """The reference documents every target carries, since the tree ships whole."""
+    return frozenset(path.name for path in (REPO_ROOT / "references").glob("*.md"))
+
+
 def retarget_doc(text: str, target: Target, shipped: frozenset[str]) -> str:
-    """Rewrite both forms of script reference that appear in guidance text.
+    """Rewrite the bare script and reference paths that appear in guidance text.
 
     Most guidance names a script through the plugin-root token, but some writes it
     bare, as `scripts/redact_secrets.py`. Under Cursor both resolve; on these hosts
@@ -144,15 +149,24 @@ def retarget_doc(text: str, target: Target, shipped: frozenset[str]) -> str:
     secret redaction before cloud transmission, so silently breaking it would
     weaken the privacy boundary rather than merely inconvenience a workflow.
 
-    Only shipped scripts are rewritten, so a reference to something the target does
-    not carry stays visibly wrong instead of being disguised as a working path.
-    The lookbehind prevents rewriting a path the token substitution just produced.
+    Reference documents have exactly the same problem and it went unnoticed longer,
+    because a missing `references/privacy.md` reads as an ordinary broken link
+    rather than a disabled control. It is not: the always-applied rules delegate the
+    privacy handling, the severity scale, the vocabulary, and the warehouse
+    portability guidance to those files, so on a host where the path does not
+    resolve the agent is left with the summary and not the rule.
+
+    Only what the target actually carries is rewritten, so a reference to something
+    absent stays visibly wrong instead of being disguised as a working path. The
+    lookbehind prevents rewriting a path the token substitution just produced.
     """
     text = retarget(text, target)
-    for name in sorted(shipped):
+    rewritable = [f"scripts/{name}" for name in shipped]
+    rewritable += [f"references/{name}" for name in shipped_references()]
+    for relative in sorted(rewritable):
         text = re.sub(
-            rf"(?<![\w/.]){re.escape(f'scripts/{name}')}",
-            f"{target.shared_root}/scripts/{name}",
+            rf"(?<![\w/.]){re.escape(relative)}",
+            f"{target.shared_root}/{relative}",
             text,
         )
     return text
@@ -305,6 +319,19 @@ def build_command(path: Path, target: Target, out_root: Path, shipped: frozenset
     if target.commands_as_skills:
         # A skill is how a host without prompt files exposes a named workflow,
         # and the command frontmatter is already a valid skill header.
+        #
+        # This host makes commands model-invocable, so `ae-build-model` and
+        # `build-model` become two selectable entries describing one job. The
+        # command is the shorter of the two, so a router that picks the alias
+        # would quietly deliver less work than the skill it fronts. Naming the
+        # canonical skill keeps the answer the same whichever entry is chosen.
+        canonical = re.search(r"Apply the `([a-z0-9-]+)` skill", body)
+        if canonical and (REPO_ROOT / "skills" / canonical.group(1) / "SKILL.md").is_file():
+            body = (
+                f"This is the `{name}` alias of the `{canonical.group(1)}` skill. "
+                f"Follow that skill's full procedure and output contract; the summary "
+                f"below orients the request and does not replace it.\n\n" + body
+            )
         front = ["---", f"name: {name}", f"description: {description}", "---", ""]
         write(out_root / target.skills_dir / name / "SKILL.md", "\n".join(front) + body)
         return

@@ -23,7 +23,7 @@ Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, a
 - **Learn:** use progressively stronger hints and preserve learner agency.
 - **Assessment:** evaluate submitted declarations read-only without supplying replacements or editing them.
 
-Read `.ae/project.yml` first. Human-edited values are authoritative. If it is absent, statically infer repository conventions with `scripts/infer_conventions.py`; inspect representative source YAML and `dbt_project.yml` directly. Apply strong conventions silently, state weak assumptions, ask only about genuine splits, and choose a labeled defensible default when evidence is absent.
+Read `.ae/project.yml` first. Human-edited values are authoritative. If it is absent, run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json`; inspect representative source YAML and `dbt_project.yml` directly. Apply strong conventions silently, state weak assumptions, ask only about genuine splits, and choose a labeled defensible default when evidence is absent.
 
 ## Procedure
 

@@ -22,7 +22,7 @@ Obtain the target model, requested improvement, project root, and any declared c
 
 ## Procedure
 
-1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run the local static convention-inference script. Record the adapter, transformation tool, model layout, SQL style, tests, and materialization patterns with their evidence strength.
+1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run `python3 ".github/ae-toolkit/scripts/infer_conventions.py" <project-root> --json`. Record the adapter, transformation tool, model layout, SQL style, tests, and materialization patterns with their evidence strength.
 2. Read the complete model, its configuration, documentation, tests, macros, direct inputs, and relevant project configuration.
 3. Define the current output contract from evidence:
    - row population and grain;

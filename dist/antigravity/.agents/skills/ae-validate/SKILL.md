@@ -2,6 +2,8 @@
 name: ae-validate
 description: Plan and run the smallest approval-gated dbt validation for changed or named resources.
 ---
+This is the `ae-validate` alias of the `validate-dbt` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Validate dbt Work
 
 Apply the `validate-dbt` skill. Default to Work mode without asking the user to name a mode.

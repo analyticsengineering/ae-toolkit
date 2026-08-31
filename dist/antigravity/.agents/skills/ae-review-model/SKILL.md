@@ -2,6 +2,8 @@
 name: ae-review-model
 description: Review an analytical data model's grain, semantics, contracts, lineage, tests, and change impact.
 ---
+This is the `ae-review-model` alias of the `data-model-review` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Review an Analytical Model
 
 Apply the `data-model-review` skill workflow and the `senior-ae-reviewer` agent perspective.

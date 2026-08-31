@@ -12,7 +12,7 @@ Design pipelines that ingest, extract, transform, or deliver analytical data. Do
 3. Design extraction and state: authentication boundaries, pagination, cursors or watermarks, incremental windows, backfills, late data, deduplication, idempotency, and replay.
 4. Define failure behavior: retries, rate limits, poison records, partial success, checkpoints, alerting, and recovery.
 5. Cover quality controls, lineage, observability, cost, and acceptance tests.
-6. Keep credentials out of artifacts. Use local specifications first; any connected inspection follows `references/privacy.md`.
+6. Keep credentials out of artifacts. Use local specifications first; any connected inspection follows `${CURSOR_PLUGIN_ROOT}/references/privacy.md`.
 7. Present assumptions, alternatives, trade-offs, risks, recommendation, and verification plan.
 
 When reviewing an existing pipeline, use Evidence, Risk, Recommendation, Verification, severity, and confidence. In Assessment mode, assess the design against supplied criteria without completing it.

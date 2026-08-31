@@ -14,6 +14,7 @@ Behave like a teammate who has already read the repository. Never ask an analyti
 - Do this as an internal first step. Never require the user to run `/ae-learn` or explain the profiling machinery before ordinary work can begin.
 - Keep fresh inference ephemeral by default. Do not add `.ae/project.yml` to a repository as a side effect of model, source, test, documentation, or review work. Persist a profile only when the user explicitly asks to save/share conventions or directly requests project profiling; never overwrite a human-edited profile silently.
 - The inference is static. It never executes dbt and never contacts a warehouse.
+- When it reports `is_dbt_project: false` it has not failed; the repository simply is not dbt. Run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/inspect_repo.py" <project-root>` to identify what the team actually uses, say which stack you found, and work in that idiom. Silence about dbt conventions is not permission to introduce them: do not write `ref()`, a `schema.yml`, or a dbt directory layout into a project that has none.
 
 ## Let strength decide whether to act or ask
 
@@ -47,7 +48,7 @@ Select every workflow needed to finish the user's outcome, but do not turn the i
 
 ## The platform is part of the convention
 
-Teams run on different warehouses, transformation tools, and BI layers, and the repository states which. Read `adapter` and `adapter_source` from the inference before writing SQL, and follow `references/warehouse-portability.md`.
+Teams run on different warehouses, transformation tools, and BI layers, and the repository states which. Read `adapter` and `adapter_source` from the inference before writing SQL, and follow `${CURSOR_PLUGIN_ROOT}/references/warehouse-portability.md`.
 
 Never introduce a function, incremental strategy, hashing implementation, or type name that appears nowhere in the project. Dialects diverge quietly: `QUALIFY` does not run on Postgres, `md5` is not available everywhere, and Snowflake's upper case identifiers are a convention to match rather than a mistake to normalise. When the warehouse cannot be determined, say so and write SQL that holds anywhere, rather than assuming the platform you have seen most often.
 

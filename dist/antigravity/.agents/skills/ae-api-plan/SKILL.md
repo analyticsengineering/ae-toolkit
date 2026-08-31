@@ -2,6 +2,8 @@
 name: ae-api-plan
 description: Plan a resilient API-based analytics ingestion pipeline with contracts, state, quality, and recovery.
 ---
+This is the `ae-api-plan` alias of the `api-pipeline` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Plan an Analytics API Pipeline
 
 Apply the `api-pipeline` skill workflow and the `pipeline-architect` agent perspective.

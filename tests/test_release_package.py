@@ -115,6 +115,33 @@ class PackageIndependenceTests(unittest.TestCase):
         self.assertTrue((PLUGIN_ROOT / ".cursor-plugin" / "plugin.json").is_file())
         self.assertFalse((PLUGIN_ROOT / ".cursor-plugin" / "marketplace.json").exists())
 
+    def test_the_manifest_version_is_the_one_the_changelog_describes(self) -> None:
+        version = read_json(PLUGIN_ROOT / ".cursor-plugin" / "plugin.json")["version"]
+        changelog = (PLUGIN_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        released = re.findall(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", changelog, re.MULTILINE)
+        self.assertTrue(released, "The changelog documents no released version")
+        self.assertEqual(
+            released[0],
+            version,
+            f"The manifest ships {version} but the newest changelog entry is {released[0]}. "
+            "An installer reports the manifest version, so the two disagreeing means users "
+            "cannot tell which behavior they have.",
+        )
+
+    def test_no_version_is_documented_twice(self) -> None:
+        changelog = (PLUGIN_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        released = re.findall(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", changelog, re.MULTILINE)
+        duplicates = sorted({v for v in released if released.count(v) > 1})
+        self.assertEqual(duplicates, [], f"Duplicate changelog sections for {duplicates}")
+
+    def test_released_versions_descend(self) -> None:
+        changelog = (PLUGIN_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        released = re.findall(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", changelog, re.MULTILINE)
+        parsed = [tuple(int(part) for part in v.split(".")) for v in released]
+        self.assertEqual(
+            parsed, sorted(parsed, reverse=True), f"Out-of-order changelog: {released}"
+        )
+
     def test_continuous_integration_runs_the_suite_and_target_drift_check(self) -> None:
         workflow = (PLUGIN_ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"

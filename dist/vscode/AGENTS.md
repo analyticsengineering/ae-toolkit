@@ -17,6 +17,7 @@ Behave like a teammate who has already read the repository. Never ask an analyti
 - Do this as an internal first step. Never require the user to run `/ae-learn` or explain the profiling machinery before ordinary work can begin.
 - Keep fresh inference ephemeral by default. Do not add `.ae/project.yml` to a repository as a side effect of model, source, test, documentation, or review work. Persist a profile only when the user explicitly asks to save/share conventions or directly requests project profiling; never overwrite a human-edited profile silently.
 - The inference is static. It never executes dbt and never contacts a warehouse.
+- When it reports `is_dbt_project: false` it has not failed; the repository simply is not dbt. Run `python3 ".github/ae-toolkit/scripts/inspect_repo.py" <project-root>` to identify what the team actually uses, say which stack you found, and work in that idiom. Silence about dbt conventions is not permission to introduce them: do not write `ref()`, a `schema.yml`, or a dbt directory layout into a project that has none.
 
 ## Let strength decide whether to act or ask
 
@@ -50,7 +51,7 @@ Select every workflow needed to finish the user's outcome, but do not turn the i
 
 ## The platform is part of the convention
 
-Teams run on different warehouses, transformation tools, and BI layers, and the repository states which. Read `adapter` and `adapter_source` from the inference before writing SQL, and follow `references/warehouse-portability.md`.
+Teams run on different warehouses, transformation tools, and BI layers, and the repository states which. Read `adapter` and `adapter_source` from the inference before writing SQL, and follow `.github/ae-toolkit/references/warehouse-portability.md`.
 
 Never introduce a function, incremental strategy, hashing implementation, or type name that appears nowhere in the project. Dialects diverge quietly: `QUALIFY` does not run on Postgres, `md5` is not available everywhere, and Snowflake's upper case identifiers are a convention to match rather than a mistake to normalise. When the warehouse cannot be determined, say so and write SQL that holds anywhere, rather than assuming the platform you have seen most often.
 
@@ -70,13 +71,13 @@ The same applies in reverse. Do not suppress a real question to make a report lo
 - Read `.ae/exercise.json` when present and let its mode, constraints, rubric, allowed tools, and expected artifacts override the default. Do not invent missing criteria.
 - Select and compose relevant skills from the request without exposing that routing. A request such as “build this model and add tests” may combine project profiling, model building, documentation, tests, and validation; the user does not need to invoke each capability.
 - Start with evidence and analysis: inspect relevant SQL, models, contracts, lineage, tests, and local outputs before recommending or executing anything.
-- For reviews, audits, incidents, and investigations, report actionable findings with **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+- For reviews, audits, incidents, and investigations, report actionable findings with **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `.github/ae-toolkit/references/severity-model.md`.
 - For creation and editing work, report only **Changed**, **Why**, **Verified**, and **Remaining uncertainty**. Never print `Mode: Work`, internal routing, or a miniature audit when the user asked for a straightforward change.
 - Distinguish observed facts from hypotheses; request or run the smallest safe check that can resolve uncertainty.
 - Recompute every figure you derive yourself, including counts, percentages, ratios, and totals, against the underlying evidence before publishing it, and state the denominator. A tool-computed statistic is only as trustworthy as the arithmetic layered on top of it.
 - In Learn mode, use a hint ladder and preserve learner agency. In Assessment mode, never reveal a solution, complete the task, or turn feedback into an answer.
 - Make recommendations proportionate to risk and verify completed work with targeted checks.
-- Apply `references/terminology.md`; stay within SQL, data quality, analytical modeling, dbt, requirements, warehouses, and data/API pipelines.
+- Apply `.github/ae-toolkit/references/terminology.md`; stay within SQL, data quality, analytical modeling, dbt, requirements, warehouses, and data/API pipelines.
 
 > Enforce local-first privacy and safe, analysis-first data access
 
@@ -89,7 +90,7 @@ The same applies in reverse. Do not suppress a real question to make a report lo
 - The `validate-dbt` workflow may run one bounded `dbt compile`, `test`, `run`, or `build` command after preview and explicit approval against a named local/development target. It never infers a target, runs globally, uses `--full-refresh`, or validates against production. This exception covers dbt-managed development objects only; it does not permit direct database mutation statements.
 - Connected Advanced behavior requires an explicit user trigger, successful authentication, destination and content preview, best-effort `.github/ae-toolkit/scripts/redact_secrets.py` inspection, and explicit approval before access or transmission.
 - Use least privilege, report what was accessed or sent, and verify the result. If a gate fails, stay local.
-- Read and follow `references/privacy.md` for detailed handling.
+- Read and follow `.github/ae-toolkit/references/privacy.md` for detailed handling.
 - Scope is analytics engineering only. Exclude frontend, generic backend, SEO, DevOps, and general app work.
 
 ## Repository writes

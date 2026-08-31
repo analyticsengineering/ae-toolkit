@@ -106,6 +106,61 @@ class GeneratedTargetTests(unittest.TestCase):
                         f"{name}: {doc.relative_to(root)} references missing {reference}",
                     )
 
+    def test_guidance_never_names_a_bare_toolkit_path(self) -> None:
+        """The dangling-path test above only sees paths already pointing at the host.
+
+        A path written bare, as `references/privacy.md`, passes it while resolving
+        against the user's own repository instead of the toolkit. That is the worse
+        failure of the two: the rule still reads as enforced, and the file it
+        delegates to is either absent or someone else's.
+
+        A skill may also bundle its own `references/` directory, where the bare form
+        is the correct relative link and must be left alone. So a bare path is only
+        a defect when it resolves neither beside its document nor under the shared
+        root, which is exactly the case generation is responsible for rewriting.
+        """
+        for name, target in TARGETS.items():
+            root = DIST / name
+            for doc in root.rglob("*.md"):
+                text = doc.read_text(encoding="utf-8")
+                for bare in set(re.findall(r"(?<![\w/.])((?:references|scripts)/[\w.-]+)", text)):
+                    # The generated header credits the tool that wrote the file. It
+                    # is provenance, not an instruction, and the tool is
+                    # deliberately never shipped.
+                    if Path(bare).name in build_targets.DEV_ONLY_SCRIPTS:
+                        continue
+                    # Only a resource sitting beside the document may be named
+                    # bare. Anything else had to be rewritten to the shared root,
+                    # and asking whether the file exists somewhere under that root
+                    # would pass a document that never points at it.
+                    self.assertTrue(
+                        (doc.parent / bare).exists(),
+                        f"{name}: {doc.relative_to(root)} names {bare!r}, which resolves "
+                        f"against the user's repository rather than {target.shared_root}",
+                    )
+
+    def test_authored_guidance_never_promises_a_missing_reference(self) -> None:
+        """A reference the repository does not contain is broken on every host.
+
+        Generation cannot catch this one, because a path that ships nowhere is
+        correctly left alone rather than rewritten into a target it is not in.
+        """
+        shared = {path.name for path in (PLUGIN_ROOT / "references").glob("*.md")}
+        self.assertTrue(shared, "expected the toolkit to ship reference documents")
+        for doc in build_targets.doc_sources():
+            named = set(re.findall(r"references/([\w.-]+\.md)", doc.read_text(encoding="utf-8")))
+            missing = sorted(
+                reference
+                for reference in named
+                if reference not in shared
+                and not (doc.parent / "references" / reference).is_file()
+            )
+            self.assertEqual(
+                [],
+                missing,
+                f"{doc.relative_to(PLUGIN_ROOT)} references documents that do not exist: {missing}",
+            )
+
     def test_every_skill_satisfies_the_rules_that_govern_silent_loading(self) -> None:
         """Three ways a skill fails to load without saying so.
 
@@ -220,6 +275,95 @@ class HostContractTests(unittest.TestCase):
         self.assertEqual("allow", self.decision_for("vscode", payload))
 
 
+class CloudGateHostContractTests(unittest.TestCase):
+    """The connected-data gate must survive translation to every host.
+
+    The shell gate was already covered here, but the cloud gate is the one that
+    guards transmission off the machine, and it is the only gate with three
+    distinct outcomes. A host that silently drops `ask` would turn a request for
+    consent into either a refusal or, far worse, an unannounced send.
+    """
+
+    def setUp(self) -> None:
+        self.gate = load_module("hooks/cloud_data_gate.py", "cloud_gate_under_test")
+
+    def reply_for(self, host: str, payload: dict) -> dict:
+        import sys as _sys
+
+        stdin, stdout = _sys.stdin, _sys.stdout
+        _sys.stdin, _sys.stdout = io.StringIO(json.dumps(payload)), io.StringIO()
+        try:
+            self.gate.main(["--host", host])
+            return json.loads(_sys.stdout.getvalue())
+        finally:
+            _sys.stdin, _sys.stdout = stdin, stdout
+
+    def decision_of(self, host: str, reply: dict) -> str:
+        if host == "vscode":
+            return reply["hookSpecificOutput"]["permissionDecision"]
+        if host == "antigravity":
+            return reply["decision"]
+        return reply["permission"]
+
+    def test_every_outcome_survives_translation_to_every_host(self) -> None:
+        connected = {
+            "tool_name": "mcp__analytics-engineering__analyze",
+            "mcp_server_name": "analytics-engineering",
+            "tool_input": {"query": "select 1"},
+        }
+        spoofed = {
+            "tool_name": "mcp__analytics-engineering__analyze",
+            "mcp_server_name": "analytics-engineering",
+            "mcp_server_url": "https://example.invalid/mcp",
+            "tool_input": {},
+        }
+        unrelated = {
+            "tool_name": "mcp__other__lookup",
+            "mcp_server_name": "other",
+            "tool_input": {},
+        }
+        for host in build_targets.TARGETS:
+            for payload, expected in ((connected, "ask"), (spoofed, "deny"), (unrelated, "allow")):
+                with self.subTest(host=host, expected=expected):
+                    reply = self.reply_for(host, payload)
+                    self.assertEqual(expected, self.decision_of(host, reply))
+
+    def test_the_reason_reaches_the_user_on_every_host(self) -> None:
+        """An `ask` without its payload preview is consent without disclosure."""
+        payload = {
+            "tool_name": "mcp__analytics-engineering__analyze",
+            "mcp_server_name": "analytics-engineering",
+            "tool_input": {"query": "select 1"},
+        }
+        for host in build_targets.TARGETS:
+            with self.subTest(host=host):
+                reply = self.reply_for(host, payload)
+                serialized = json.dumps(reply)
+                self.assertIn("No content is sent until you approve", serialized)
+                self.assertIn("$.query", serialized)
+
+    def test_the_cloud_gate_stands_aside_for_shell_traffic(self) -> None:
+        payload = {"tool_name": "run_command", "tool_input": {"command": "ls"}}
+        for host in build_targets.TARGETS:
+            with self.subTest(host=host):
+                reply = self.reply_for(host, payload)
+                self.assertEqual("allow", self.decision_of(host, reply))
+
+    def test_an_unreadable_payload_fails_closed_on_every_host(self) -> None:
+        import sys as _sys
+
+        for host in build_targets.TARGETS:
+            with self.subTest(host=host):
+                stdin, stdout = _sys.stdin, _sys.stdout
+                _sys.stdin, _sys.stdout = io.StringIO("{not json"), io.StringIO()
+                try:
+                    self.gate.main(["--host", host])
+                    reply = json.loads(_sys.stdout.getvalue())
+                finally:
+                    _sys.stdin, _sys.stdout = stdin, stdout
+                self.assertEqual("deny", self.decision_of(host, reply))
+
+
 class InstallerTests(unittest.TestCase):
     """Installing must not damage a repository that already has its own config."""
 
@@ -262,13 +406,39 @@ class InstallerTests(unittest.TestCase):
         self.assertNotIn(f'"{target.shared_root}/hooks', command)
 
     def test_install_verifies_the_gate_rather_than_assuming_it(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp)
-            with contextlib.redirect_stdout(io.StringIO()):
-                status = install_target.install("antigravity", workspace, dry_run=False)
-            self.assertEqual(0, status)
-            ok, detail = install_target.verify_gate(workspace, TARGETS["antigravity"])
-            self.assertTrue(ok, detail)
+        """Run for every host: a gate proven on one target proves nothing about the other."""
+        for name in TARGETS:
+            with self.subTest(host=name), tempfile.TemporaryDirectory() as tmp:
+                workspace = Path(tmp)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    status = install_target.install(name, workspace, dry_run=False)
+                self.assertEqual(0, status)
+                ok, detail = install_target.verify_gate(workspace, TARGETS[name])
+                self.assertTrue(ok, detail)
+
+    def test_an_installed_gate_resolves_from_a_subdirectory(self) -> None:
+        """The failure this prevents is silent on two of the three hosts.
+
+        VS Code and Antigravity resolve a relative hook command against the
+        directory the session started in, and neither blocks a tool call when its
+        hook fails to launch. A gate left at a relative path therefore disappears
+        without a message the moment work begins in a subdirectory.
+        """
+        for name, target in TARGETS.items():
+            with self.subTest(host=name), tempfile.TemporaryDirectory() as tmp:
+                workspace = Path(tmp)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    install_target.install(name, workspace, dry_run=False)
+
+                config = json.loads((workspace / target.hooks_config).read_text(encoding="utf-8"))
+                for command in re.findall(r'"command":\s*"([^"]+)"', json.dumps(config)):
+                    script = command.split()[-1] if command.endswith(".py") else None
+                    if script:
+                        self.assertTrue(
+                            Path(script).is_absolute(),
+                            f"{name}: hook command is not absolute: {command}",
+                        )
+                        self.assertTrue(Path(script).is_file(), f"{name}: missing {script}")
 
     def test_verification_fails_when_the_gate_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

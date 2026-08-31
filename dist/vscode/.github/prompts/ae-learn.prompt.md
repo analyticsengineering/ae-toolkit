@@ -4,7 +4,7 @@ agent: agent
 ---
 # Learn This Project
 
-Apply the `project-profile` skill workflow and the `senior-ae-reviewer` agent perspective.
+Apply the `project-profile` skill workflow. Report the conventions the repository already follows; judging whether they are good conventions is a different request.
 
 ## Execution boundary
 

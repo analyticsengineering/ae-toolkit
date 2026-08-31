@@ -22,7 +22,7 @@ Obtain the target model, business grain, update and delete behavior, event and i
 
 ## Procedure
 
-1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run the local static convention-inference script. Record adapter and source, transformation tool, incremental strategies, configuration layout, macros, tests, and SQL style with evidence strength.
+1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run `python3 ".agents/ae-toolkit/scripts/infer_conventions.py" <project-root> --json`. Record adapter and source, transformation tool, incremental strategies, configuration layout, macros, tests, and SQL style with evidence strength.
 2. Read the complete model, inherited project configuration, direct inputs, keys, tests, snapshots, macros, hooks, and comparable incremental models. Never copy a strategy merely because it is common on another warehouse.
 3. State the target grain and candidate `unique_key`. Require a stable, non-null key at that grain; for a composite key, use the repository's established implementation rather than introducing new hashing.
 4. Classify source change behavior:

@@ -23,7 +23,7 @@ Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, a
 - **Learn:** explain structural choices with progressive hints and preserve learner agency.
 - **Assessment:** evaluate submitted YAML read-only without correcting or editing it.
 
-Read `.ae/project.yml` first and treat human edits as authoritative. If absent, use static convention inference and inspect representative YAML plus `dbt_project.yml`. Infer schema-file strategy, filename pattern, resource grouping, property order, indentation, quoting, version key, and test syntax from local evidence. Apply strong conventions silently, state weak assumptions, ask about genuine splits, and label defensible defaults where evidence is absent.
+Read `.ae/project.yml` first and treat human edits as authoritative. If absent, run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json` and inspect representative YAML plus `dbt_project.yml`. Infer schema-file strategy, filename pattern, resource grouping, property order, indentation, quoting, version key, and test syntax from local evidence. Apply strong conventions silently, state weak assumptions, ask about genuine splits, and label defensible defaults where evidence is absent.
 
 ## Procedure
 

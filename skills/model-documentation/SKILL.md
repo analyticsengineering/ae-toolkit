@@ -23,7 +23,7 @@ Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, a
 - **Learn:** teach with a hint ladder and leave the learner's wording to them.
 - **Assessment:** grade submitted documentation against stated criteria without rewriting or editing it.
 
-Read `.ae/project.yml` first and treat human edits as authoritative. If absent, use static convention inference, then inspect representative model SQL, YAML, and docs blocks. Infer YAML strategy, file naming, prose style, and documentation depth from the repository. Apply strong conventions silently, state weak assumptions, ask about real splits, and label defaults where evidence is absent.
+Read `.ae/project.yml` first and treat human edits as authoritative. If absent, run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json`, then inspect representative model SQL, YAML, and docs blocks. Infer YAML strategy, file naming, prose style, and documentation depth from the repository. Apply strong conventions silently, state weak assumptions, ask about real splits, and label defaults where evidence is absent.
 
 ## Procedure
 

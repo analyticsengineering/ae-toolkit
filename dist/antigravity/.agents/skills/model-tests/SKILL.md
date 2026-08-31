@@ -23,7 +23,7 @@ Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, a
 - **Learn:** expose risks through a hint ladder and let the learner author the tests.
 - **Assessment:** evaluate submitted tests against the stated rubric without supplying replacements or editing them.
 
-Read `.ae/project.yml` first and treat human edits as authoritative. If absent, use static convention inference and inspect neighboring model YAML, singular tests, unit tests, packages, and macros. Infer test syntax, placement, arguments, severity, naming, and key defaults from repository evidence. Apply strong conventions silently, state weak assumptions, ask about genuine splits, and label defaults when evidence is absent.
+Read `.ae/project.yml` first and treat human edits as authoritative. If absent, run `python3 ".agents/ae-toolkit/scripts/infer_conventions.py" <project-root> --json` and inspect neighboring model YAML, singular tests, unit tests, packages, and macros. Infer test syntax, placement, arguments, severity, naming, and key defaults from repository evidence. Apply strong conventions silently, state weak assumptions, ask about genuine splits, and label defaults when evidence is absent.
 
 ## Procedure
 

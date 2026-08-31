@@ -78,6 +78,8 @@ Within Grain & Cardinality, state `Expected grain`, `Actual/possible grain`, and
 
 Keep one primary home for each finding and cross-reference it instead of repeating it across sections. Prioritize material correctness over style. Default to the 3–5 verification queries that best distinguish the major risks, each with an expected result. Do not include a full rewritten query unless the user asks for one.
 
+Section count follows the query, not the template. On a short query with nothing to report under a heading, omit the heading rather than printing it empty; ten headings over a twenty-line query is a report about the format, and it buries the one finding that mattered. Summary, and any section carrying a real finding, are never omitted, and a `BLOCKER` or `HIGH` always keeps its full evidence. When a formal review was explicitly requested, or the change is a pull request or a published contract, return every section so the reader can see which checks came back clean.
+
 ## Verification
 
 Before finalizing:

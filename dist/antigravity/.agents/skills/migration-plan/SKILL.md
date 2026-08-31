@@ -22,7 +22,7 @@ Obtain the current and target contracts, business reason, owners, critical consu
 
 ## Procedure
 
-1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run the local static convention-inference script. Record adapter, transformation tool, naming, versioning, contract, test, and deployment patterns with evidence strength.
+1. Establish repository conventions first. Read `.ae/project.yml` when present; otherwise run `python3 ".agents/ae-toolkit/scripts/infer_conventions.py" <project-root> --json`. Record adapter, transformation tool, naming, versioning, contract, test, and deployment patterns with evidence strength.
 2. Read current definitions, configuration, documentation, tests, direct lineage, metrics, semantic objects, BI artifacts, orchestration, and existing migration patterns.
 3. State current and target contracts side by side in prose, covering:
    - row population, grain, and keys;

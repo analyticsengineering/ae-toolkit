@@ -2,6 +2,8 @@
 name: ae-profile-data
 description: Profile a dataset's shape, completeness, uniqueness, distributions, freshness, and quality risks.
 ---
+This is the `ae-profile-data` alias of the `data-profile` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Profile Analytical Data
 
 Apply the `data-profile` skill workflow and the `data-quality-investigator` agent perspective.

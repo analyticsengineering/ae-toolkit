@@ -2,9 +2,11 @@
 name: ae-trace
 description: Trace a column, metric, or business figure back to its source and explain what it actually measures.
 ---
+This is the `ae-trace` alias of the `trace-lineage` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Trace a Figure
 
-Apply the `trace-lineage` skill workflow and the `senior-ae-reviewer` agent perspective.
+Apply the `trace-lineage` skill workflow. Answer what the figure measures; do not convert the trace into a review of the models it passes through.
 
 ## Execution boundary
 

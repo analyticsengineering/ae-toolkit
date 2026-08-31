@@ -2,6 +2,8 @@
 name: ae-requirements
 description: Turn an analytics request into testable requirements, metric definitions, data contracts, and acceptance criteria.
 ---
+This is the `ae-requirements` alias of the `analytics-requirements` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Define Analytics Requirements
 
 Apply the `analytics-requirements` skill workflow.

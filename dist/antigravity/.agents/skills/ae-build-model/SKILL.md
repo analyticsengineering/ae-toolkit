@@ -2,9 +2,11 @@
 name: ae-build-model
 description: Build a dbt model from existing upstream models using this repository's naming, key, testing, documentation, and SQL conventions.
 ---
+This is the `ae-build-model` alias of the `build-model` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Build a Model
 
-Apply the `build-model` skill workflow and the `senior-ae-reviewer` agent perspective.
+Apply the `build-model` skill workflow. Hold the review standard while writing, but report as a builder: this command produces a model, not an audit of one.
 
 ## Execution boundary
 

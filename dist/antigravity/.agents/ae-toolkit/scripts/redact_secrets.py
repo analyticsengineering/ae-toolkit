@@ -149,6 +149,27 @@ class JsonArgumentParser(argparse.ArgumentParser):
         raise SystemExit(2)
 
 
+# Code that fetches a credential rather than containing one. `api_key=os.environ[...]`
+# is the recommended way to handle a secret, and flagging it trains people to
+# ignore the scanner on exactly the files where it should be trusted.
+CREDENTIAL_LOOKUP = re.compile(
+    r"""(?ix)^\s*(?:
+        os\.environ
+        | os\.getenv
+        | environ
+        | getenv
+        | process\.env
+        | config\b
+        | settings\b
+        | secrets?\.
+        | keyring\.
+        | vault\b
+        | \w*get_secret\w*
+        | input\s*\(
+    )"""
+)
+
+
 def _looks_like_placeholder(value: str) -> bool:
     normalized = value.strip().strip("\"'").lower()
     return (
@@ -156,6 +177,7 @@ def _looks_like_placeholder(value: str) -> bool:
         or normalized.startswith(("${", "{{", "<"))
         or normalized.endswith(("}}", ">"))
         or set(normalized) <= {"*", "x", "X", "-"}
+        or bool(CREDENTIAL_LOOKUP.match(value.strip()))
     )
 
 

@@ -2,6 +2,8 @@
 name: ae-debug
 description: Debug an analytics data, SQL, dbt, or pipeline failure through evidence and testable hypotheses.
 ---
+This is the `ae-debug` alias of the `data-quality-investigation` skill. Follow that skill's full procedure and output contract; the summary below orients the request and does not replace it.
+
 # Debug Analytics Engineering Failures
 
 Apply the `data-quality-investigation` skill workflow and the `data-quality-investigator` agent perspective.
