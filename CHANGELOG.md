@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Validation planning distinguishes formatting/comment, description-only, test-only, contract, rename/delete, and semantic/metric YAML changes so harmless metadata edits no longer select downstream models.
 - Validation planning now recommends intent from the changed resource type and omits a broader warehouse command for metadata-only or test-only changes unless the caller explicitly overrides the safeguard.
+- A request to skip the impact analysis, or to apply a rename mechanically, no longer downgrades a published contract change to an ordinary reversible edit. Renaming a published column now names its semantic, BI, exposure, orchestration, and external consumers and waits for approval regardless of how the request was phrased.
 
 ## [1.2.0] - 2026-08-31
 

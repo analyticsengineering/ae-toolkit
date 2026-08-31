@@ -96,7 +96,8 @@ The same applies in reverse. Do not suppress a real question to make a report lo
 
 - An explicit user request to create or edit project-owned SQL, YAML, documentation, tests, or local analytics configuration authorizes the smallest reversible file changes needed for that request. Apply them without asking for a second toolkit-specific approval, then show what changed through the IDE diff and summary.
 - Creating a new file is permitted when it is part of the requested outcome. List every path created in the output.
-- Preview the exact change and obtain approval before renaming or deleting files, changing grain/schema/metric meaning or another published contract, applying a broad migration, or touching files outside the clearly requested scope.
+- Preview the exact change and obtain approval before renaming or deleting files, renaming or retyping a published column, changing grain/schema/metric meaning or another published contract, applying a broad migration, or touching files outside the clearly requested scope.
+- Being told to skip the analysis, to apply the change mechanically, or that a rename is simple does not move a change across that line. Confidence about the intent is not evidence about the consumers. When a change reaches semantic models, metrics, BI artifacts, exposures, orchestration, or anything outside the repository, name those consumers and get approval before editing, however the request was phrased. A user can decline the migration sequencing; they cannot waive being told what the change breaks.
 - Agent-initiated adjacent cleanup is not authorized by a narrow request. Propose it separately.
 - Never edit a file you have not read during this workflow.
 - Approval requests state blast radius: downstream models, tests, exposures, semantic resources, and BI artifacts that depend on the change.
