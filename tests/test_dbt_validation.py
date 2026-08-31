@@ -93,6 +93,42 @@ class ValidationPlannerTests(unittest.TestCase):
                 self.assertTrue(plan["scope"]["models"])
                 self.assertTrue(all(not selector.endswith("+") for selector in plan["scope"]["selectors"]))
 
+    def test_yaml_change_kind_deterministically_limits_requested_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            schema = root / "models" / "schema.yml"
+            original = schema.read_text(encoding="utf-8")
+
+            schema.write_text(original + "\n# changed\n", encoding="utf-8")
+            comments = planner.plan_validation(root, target="development", intent="build")
+
+            schema.write_text(
+                original.replace("          - not_null", "          - not_null\n          - accepted_values", 1),
+                encoding="utf-8",
+            )
+            tests = planner.plan_validation(root, target="development", intent="build")
+            overridden = planner.plan_validation(
+                root,
+                target="development",
+                intent="build",
+                allow_broader_intent=True,
+            )
+
+        self.assertEqual(comments["recommended_intent"], "static")
+        self.assertEqual(comments["intent"], "static")
+        self.assertTrue(comments["broader_intent_requires_override"])
+        self.assertEqual([step["command"].split()[1] for step in comments["commands"]], ["parse", "ls"])
+
+        self.assertEqual(tests["recommended_intent"], "test")
+        self.assertEqual(tests["intent"], "test")
+        self.assertTrue(tests["broader_intent_requires_override"])
+        self.assertEqual([step["command"].split()[1] for step in tests["commands"]], ["parse", "ls", "test"])
+
+        self.assertEqual(overridden["recommended_intent"], "test")
+        self.assertEqual(overridden["intent"], "build")
+        self.assertFalse(overridden["broader_intent_requires_override"])
+        self.assertEqual(overridden["commands"][-1]["command"].split()[1], "build")
+
     def test_yaml_contract_and_deleted_resources_expand_downstream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self.project(tmp)

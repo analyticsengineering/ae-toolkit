@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Fixed
 
 - Validation planning distinguishes formatting/comment, description-only, test-only, contract, rename/delete, and semantic/metric YAML changes so harmless metadata edits no longer select downstream models.
+- Validation planning now recommends intent from the changed resource type and omits a broader warehouse command for metadata-only or test-only changes unless the caller explicitly overrides the safeguard.
 
 ## [1.2.0] - 2026-08-31
 

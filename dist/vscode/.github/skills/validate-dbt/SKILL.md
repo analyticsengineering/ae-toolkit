@@ -22,7 +22,7 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
    - `python3 ".github/ae-toolkit/scripts/inspect_git.py" <project-root> --pretty`
 3. Determine whether the user named a scope. If not, derive it only from changed dbt resources. Classify YAML changes: formatting/comments, descriptions, and tests validate the named model only; contract fields, renames, and deletions include downstream consumers; semantic/metric changes resolve affected consumers before any model build. Do not turn an unrelated dirty worktree into validation scope.
 4. Run `python3 ".github/ae-toolkit/scripts/plan_dbt_validation.py" <project-root> --intent <intent> [--model <name>] [--target <dev-target>] --pretty`.
-5. Review the plan rather than trusting it blindly. Confirm every selected node exists, YAML changes map to the reported models, renamed resources include downstream consumers, and the scope is not global.
+5. Review `recommended_intent`, its reason, and the plan rather than trusting either blindly. The planner omits an unnecessarily broad warehouse command for metadata-only or test-only changes unless `--allow-broader-intent` is deliberately supplied. Confirm every selected node exists, YAML changes map to the reported models, renamed resources include downstream consumers, and the scope is not global.
 6. Run static `dbt parse` and `dbt ls` steps one at a time when useful. Stop if selector resolution differs from the plan.
 7. Before `compile`, `show`, `test`, `run`, `build`, `debug`, or `docs generate`, show one exact command and state:
    - why this is the smallest sufficient command;
@@ -42,6 +42,8 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
 - `test`: existing relations are current and only assertions need checking.
 - `run`: build is needed but tests are intentionally out of scope.
 - `build`: models and their tests both require validation; preferred final check for new model work.
+
+For inferred Git scope, formatting/comments and descriptions recommend static parse/selector checks, test-only YAML recommends `test`, model SQL or contract changes recommend `build`, and semantic changes require consumer resolution before warehouse work. An explicit model scope keeps the caller's requested intent. Never override a narrower user-requested check merely because the planner recommends `build`.
 
 Never auto-run `deps`, `seed`, `snapshot`, `run-operation`, a global command, or any command with `--full-refresh`.
 
