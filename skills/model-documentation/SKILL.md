@@ -34,8 +34,8 @@ Read `.ae/project.yml` first and treat human edits as authoritative. If absent, 
 5. Describe transformations only when they change interpretation. Do not narrate CTEs, casts, aliases, or obvious implementation.
 6. Reconcile contradictions explicitly. Never silently choose among different business definitions for the same metric.
 7. Place documentation according to the repository's model-level, grouped-YAML, or docs-block pattern.
-8. Create new files freely. Before changing or deleting existing SQL, YAML, or Markdown, show the exact diff and blast radius across models, tests, exposures, and BI artifacts, then wait for approval.
-9. If composing with `build-model`, return the proposed documentation, evidence, target path, and approval status; do not redo source setup, SQL construction, or model-test design.
+8. Apply explicitly requested, reversible documentation edits to project-owned YAML or Markdown without asking for a second approval. Preview and ask before deleting or moving files, changing business meaning, or expanding beyond the requested models.
+9. If composing with `build-model`, return the documentation, evidence, target path, and any unresolved semantic gate; do not redo source setup, SQL construction, or model-test design.
 
 ## Evidence required
 
@@ -49,11 +49,11 @@ Cite the SQL expression or authoritative local requirement behind every material
 - Copying descriptions between models whose grain or filters differ.
 - Resolving contradictory metric definitions without stakeholder evidence.
 - Treating YAML formatting as documentation work when semantics are unchanged.
-- Editing grouped YAML or shared docs blocks without preview and approval.
+- Changing shared business meaning or documentation outside the requested models without preview and approval.
 
 ## Output contract
 
-Return `# Model Documentation` with: Mode; Model meaning and grain; Documentation proposed; Evidence and conventions; Files created; Existing changes awaiting approval; Blast radius; Unknown semantics; Verification. For each actionable finding include severity, confidence, Evidence, Risk, Recommendation, and Verification.
+For ordinary creation or editing, return `# Model Documentation` with: Changed; Why; Verified; Remaining uncertainty. Name the model grain and any semantic claim that could not be established. Use formal severity and evidence findings only when reviewing documentation quality or reporting a material risk.
 
 ## Verification
 
@@ -69,5 +69,5 @@ Return `# Model Documentation` with: Mode; Model meaning and grain; Documentatio
 - Local Basic only: use repository files and static local tools; never call MCP, execute dbt, or contact a warehouse.
 - Do not place credentials, connection strings, PII, raw row values, or unreleased sensitive metrics in documentation.
 - New files may be created and must be listed.
-- Existing-file edits or deletions require exact diff preview, blast radius, and explicit approval.
+- Explicitly requested reversible documentation edits may proceed; deletions, moves, semantic changes, and scope expansion require preview, blast radius, and approval.
 - In Assessment mode, make no repository changes.

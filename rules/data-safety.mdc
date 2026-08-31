@@ -17,9 +17,11 @@ alwaysApply: true
 
 ## Repository writes
 
-- Creating a new file is permitted without prior approval, because it is additive and a user can revert it with git. List every path created in the output.
-- Editing or deleting an existing file requires showing the change and receiving approval first. Never silently rewrite work a person already committed.
+- An explicit user request to create or edit project-owned SQL, YAML, documentation, tests, or local analytics configuration authorizes the smallest reversible file changes needed for that request. Apply them without asking for a second toolkit-specific approval, then show what changed through the IDE diff and summary.
+- Creating a new file is permitted when it is part of the requested outcome. List every path created in the output.
+- Preview the exact change and obtain approval before renaming or deleting files, changing grain/schema/metric meaning or another published contract, applying a broad migration, or touching files outside the clearly requested scope.
+- Agent-initiated adjacent cleanup is not authorized by a narrow request. Propose it separately.
 - Never edit a file you have not read during this workflow.
-- Requests for approval state blast radius: downstream models, tests, exposures, and BI artifacts that depend on the file.
-- The same content can fall on either side of this line, and that is intended. Under model-level YAML, documentation for a new model is a new file and lands automatically; under a single grouped YAML, the identical content is an edit and needs approval.
+- Approval requests state blast radius: downstream models, tests, exposures, semantic resources, and BI artifacts that depend on the change.
+- Warehouse access, production actions, external transmission, destructive operations, and other non-file side effects always keep their own explicit approval or denial boundaries.
 - Never run destructive version-control operations, including history rewrites, force pushes, resets that discard work, or branch deletion.

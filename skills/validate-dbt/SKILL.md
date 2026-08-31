@@ -20,7 +20,7 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
 2. Run the static inspectors before proposing execution:
    - `python3 "${CURSOR_PLUGIN_ROOT}/scripts/inspect_dbt.py" <project-root> --pretty`
    - `python3 "${CURSOR_PLUGIN_ROOT}/scripts/inspect_git.py" <project-root> --pretty`
-3. Determine whether the user named a scope. If not, derive it only from changed dbt resources. Do not turn an unrelated dirty worktree into validation scope.
+3. Determine whether the user named a scope. If not, derive it only from changed dbt resources. Classify YAML changes: formatting/comments, descriptions, and tests validate the named model only; contract fields, renames, and deletions include downstream consumers; semantic/metric changes resolve affected consumers before any model build. Do not turn an unrelated dirty worktree into validation scope.
 4. Run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/plan_dbt_validation.py" <project-root> --intent <intent> [--model <name>] [--target <dev-target>] --pretty`.
 5. Review the plan rather than trusting it blindly. Confirm every selected node exists, YAML changes map to the reported models, renamed resources include downstream consumers, and the scope is not global.
 6. Run static `dbt parse` and `dbt ls` steps one at a time when useful. Stop if selector resolution differs from the plan.
@@ -31,7 +31,7 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
    - whether warehouse objects may be created or replaced.
 8. Obtain approval, then run exactly that command. Do not batch a second dbt command into the same shell call.
 9. Read the resulting `target/run_results.json` or bounded log with `python3 "${CURSOR_PLUGIN_ROOT}/scripts/interpret_dbt_results.py" --run-results <path> [--log <path>] --pretty`.
-10. If validation fails, identify the smallest repair. A new file may be created and reported. Any repair to an existing file requires a proposed diff, downstream blast radius, and approval before editing.
+10. If validation fails, identify the smallest repair. When the request explicitly includes fixing failures, apply reversible project-owned SQL/YAML/test edits without a second approval. Otherwise preview the repair first because validation alone does not authorize edits. Contract changes, renames, deletions, and scope expansion always require preview, blast radius, and approval.
 11. Re-plan after a repair. Never broaden a selector silently. Stop after five execution attempts and report unresolved evidence rather than looping.
 
 ## Command choice
@@ -51,12 +51,12 @@ Separate compile, database, permission, dependency, selector, and test-assertion
 
 ## Output
 
-Return `# dbt Validation` with: Status; Scope and selector evidence; Target confirmation; Commands planned and run with exit codes; Failures interpreted; Changes created; Existing-file repairs awaiting approval; Remaining uncertainty; Next smallest command or “None.”
+Return `# dbt Validation` with: Changed, including any repairs; Why this was the smallest scope; Verified, including target, commands run, and exit status; Remaining uncertainty. If execution is awaiting approval or a failure remains, state the exact next command or repair instead of exposing internal workflow state.
 
 ## Verification
 
 - Every execution used an explicit non-production target and a non-empty selector.
 - Planned and resolved selector sets agree.
 - Reported pass/fail comes from the current command and artifact, not an older terminal transcript.
-- Every existing-file repair was approved before application.
+- Every repair was either explicitly included in the request or separately approved before application.
 - No credentials, profile values, raw rows, or unbounded logs appear in output.

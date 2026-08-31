@@ -119,6 +119,8 @@ Why is yesterday's paid revenue not ready yet?
 
 Work is the default. You do not need to select a mode, agent, skill, or slash command. The toolkit profiles the repository when conventions matter and composes the necessary capabilities silently. Provide business meaning or intended grain when you know it; otherwise the toolkit asks one focused question only when repository evidence leaves a real ambiguity.
 
+Convention inference is ephemeral by default. The toolkit reads `.ae/project.yml` when a team has chosen to keep one, but it never adds that file to an unrelated model, source, test, documentation, or review change. Persisting a shared profile is an explicit choice.
+
 ## What it handles
 
 The toolkit supports the day-to-day model lifecycle: project conventions, sources, staging/intermediate/fact/dimension models, tests, documentation, YAML maintenance, incremental design, metrics, semantic layers, LookML and other detected BI layers, lineage, safe refactors and renames, migrations, freshness incidents, data quality, SQL and PR review, profiling, requirements, and API-to-analytics pipelines.
@@ -171,6 +173,8 @@ For local workflows, the mode shapes the response but is not an access-control b
 ## Privacy and approval
 
 V1 has **zero anonymous telemetry**. The plugin does not contain background analytics, tracking pixels, usage beacons, or automatic workspace uploads.
+
+An explicit request to create or edit project-owned SQL, YAML, documentation, tests, or local analytics configuration authorizes the smallest reversible file changes needed; the IDE diff remains visible. Renames, deletions, breaking contracts, broad migrations, warehouse access, production actions, destructive operations, and external transmission retain preview or explicit-approval gates appropriate to their risk.
 
 Local workflows use context the user makes available to Cursor. Connected use is opt-in: before any request, submission, database query, or MCP action, the agent must show a useful preview of the proposed scope and obtain explicit approval. Nothing is sent to the AnalyticsEngineering.com endpoint automatically.
 
@@ -367,7 +371,7 @@ Do not edit `.ae/exercise.json` to bypass server state. Reconnect and reconcile 
 
 ## Contributing
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), keep free workflows usable without the remote service, preserve preview-and-approval boundaries, add tests for behavior changes, and update [CHANGELOG.md](CHANGELOG.md).
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), keep free workflows usable without the remote service, preserve risk-based preview-and-approval boundaries, add tests for behavior changes, and update [CHANGELOG.md](CHANGELOG.md).
 
 Security reports should follow [SECURITY.md](SECURITY.md), not a public issue.
 

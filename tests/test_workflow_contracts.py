@@ -136,24 +136,61 @@ class DayToDayWorkflowContractTests(unittest.TestCase):
             "approval",
         )
 
-    def test_every_writing_workflow_preserves_the_edit_boundary(self) -> None:
-        writers = {
+    def test_creation_outputs_hide_framework_language(self) -> None:
+        for name in (
+            "build-model",
+            "source-setup",
+            "model-documentation",
+            "model-tests",
+            "yaml-maintenance",
+            "refactor-model",
+            "incremental-model",
+            "metric-definition",
+            "semantic-layer",
+            "bi-model",
+            "validate-dbt",
+        ):
+            text = self.skill(name)
+            output = text.split("## output", 1)[-1].split("## verification", 1)[0]
+            with self.subTest(skill=name):
+                self.assertNotIn("mode;", output)
+                for heading in ("changed", "why", "verified", "remaining uncertainty"):
+                    self.assertIn(heading, output)
+
+    def test_reversible_edits_do_not_require_a_second_approval(self) -> None:
+        ordinary_writers = {
             "source-setup",
             "model-documentation",
             "model-tests",
             "refactor-model",
-            "rename-model",
             "incremental-model",
             "semantic-layer",
             "bi-model",
             "yaml-maintenance",
         }
-        for name in sorted(writers):
+        for name in sorted(ordinary_writers):
             text = self.skill(name)
             with self.subTest(skill=name):
-                self.assertIn("existing", text)
-                self.assertIn("approval", text)
-                self.assertIn("new file", text)
+                self.assertIn("second approval", text)
+
+        safety = (PLUGIN_ROOT / "rules" / "data-safety.mdc").read_text(encoding="utf-8").lower()
+        self.assertIn("explicit user request", safety)
+        self.assertIn("without asking for a second", safety)
+        for guarded in ("renaming", "deleting", "published contract", "warehouse access", "external transmission"):
+            self.assertIn(guarded, safety)
+
+        for name in ("rename-model", "migration-plan", "validate-dbt"):
+            with self.subTest(risky_skill=name):
+                self.assertIn("approval", self.skill(name))
+
+    def test_project_profile_persistence_is_opt_in(self) -> None:
+        conventions = (PLUGIN_ROOT / "rules" / "ae-conventions.mdc").read_text(
+            encoding="utf-8"
+        ).lower()
+        profile = self.skill("project-profile")
+        self.assertIn("inference ephemeral by default", conventions)
+        self.assertIn("do not add `.ae/project.yml`", conventions)
+        self.assertIn("explicitly asks to persist or share", profile)
 
 
 if __name__ == "__main__":

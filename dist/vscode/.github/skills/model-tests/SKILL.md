@@ -35,8 +35,8 @@ Read `.ae/project.yml` first and treat human edits as authoritative. If absent, 
 6. Add relationship tests only when the intended referential rule and null policy are known. Do not turn optional relationships into false failures.
 7. Keep tests at the model whose contract they protect; do not duplicate upstream checks unless this model can reintroduce the defect.
 8. Confirm macros, packages, fixtures, refs, sources, and columns referenced by each proposed test exist locally.
-9. Create new singular or unit-test files freely. Before editing or deleting existing YAML, SQL, or fixtures, show the exact diff and blast radius across models, tests, exposures, and BI artifacts, then wait for approval.
-10. If composing with `build-model`, return tests, protected risks, paths, and approval status; do not redo source setup, model SQL, documentation, or structural YAML cleanup.
+9. Apply explicitly requested, reversible test additions and edits in project-owned YAML, SQL, or synthetic fixtures without asking for a second approval. Preview and ask before deleting tests, weakening an established contract, or expanding beyond the requested model.
+10. If composing with `build-model`, return tests, protected risks, paths, and any unresolved contract gate; do not redo source setup, model SQL, documentation, or structural YAML cleanup.
 
 ## Evidence required
 
@@ -55,7 +55,7 @@ For every proposed test, cite the SQL, contract, requirement, incident, or downs
 
 ## Output contract
 
-Return `# Model Tests` with: Mode; Model grain and risks; Existing coverage; Tests proposed and what each protects; Evidence and conventions; Files created; Existing changes awaiting approval; Blast radius; Verification and residual gaps. For each actionable finding include severity, confidence, Evidence, Risk, Recommendation, and Verification.
+For ordinary creation or editing, return `# Model Tests` with: Changed; Why each test exists; Verified; Remaining uncertainty. Name the model grain and the risk protected by each test. Use formal severity and evidence findings only when reviewing coverage or reporting a material risk.
 
 ## Verification
 
@@ -71,5 +71,5 @@ Return `# Model Tests` with: Mode; Model grain and risks; Existing coverage; Tes
 - Local Basic only: use local files and static local tools; never call MCP, execute dbt, or contact a warehouse.
 - Use synthetic fixtures only; never copy raw production rows, PII, credentials, or sensitive values into tests.
 - New files may be created and must be listed.
-- Existing-file edits or deletions require exact diff preview, blast radius, and explicit approval.
+- Explicitly requested reversible test edits may proceed; deletion, contract weakening, and scope expansion require preview, blast radius, and approval.
 - In Assessment mode, perform read-only evaluation.

@@ -97,7 +97,7 @@ Field names, strengths, and counts are generic and identify nobody. Values are n
 ## Safety/privacy
 
 - Inference is static. Never execute dbt, contact a warehouse, or call MCP to build a profile.
-- Writing `.ae/project.yml` creates a new file and is permitted; replacing an existing profile is an edit and requires approval.
+- Keep inference ephemeral unless the user explicitly asks to persist or share the profile. An explicit save request permits creating `.ae/project.yml`; replacing a human-edited profile still requires showing drift and receiving approval.
 - Never copy credentials, connection strings, or profile targets into the output.
 - Inference corrections are written into the local output and nowhere else. Never offer to send one, and never read a willingness to share as approval for anything further.
 

@@ -12,12 +12,12 @@ This is a free local workflow. Use local project files only. Never require or ca
 
 ## Workflow
 
-1. Confirm the project root and mode. Read `.ae/exercise.json` if present, and note whether `.ae/project.yml` already exists.
+1. Confirm the project root. Read `.ae/exercise.json` if present, silently default to Work otherwise, and note whether `.ae/project.yml` already exists.
 2. Run `python3 ".agents/ae-toolkit/scripts/infer_conventions.py" <project-root> --json` when Python is available. Treat its tallies as the evidence base for every convention you report.
 3. Compare the inference against any stored `.ae/project.yml`. Human edits outrank inference; report differences as drift instead of replacing them.
 4. Open the contradicting files behind each `split` convention and decide whether the disagreement is real, a legacy directory, or a migration in progress.
 5. Report each convention at its evidence strength, and route every unresolved split into a single confirmation step rather than a series of questions.
-6. Offer to write `.ae/project.yml`. Creating it is additive; replacing an existing profile requires approval.
+6. Keep the profile ephemeral unless the user explicitly asks to persist or share it. An explicit save request permits creating `.ae/project.yml`; replacing a human-edited profile requires showing drift and receiving approval.
 7. If the user edits a value you inferred, or a stored profile contradicts a fresh inference, collect those disagreements as inference corrections. Skip this entirely when the profile is accepted unchanged.
 8. In Assessment mode, do not write the profile. In Learn mode, explain what each convention changes for later model building.
 

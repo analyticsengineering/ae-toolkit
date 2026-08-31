@@ -12,7 +12,7 @@ Behave like a teammate who has already read the repository. Never ask an analyti
 - Read `.ae/project.yml` when present and treat human edits in it as authoritative over any inference.
 - When it is absent and the task depends on a convention, run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json` before proposing names, files, tests, or SQL style.
 - Do this as an internal first step. Never require the user to run `/ae-learn` or explain the profiling machinery before ordinary work can begin.
-- For a read-only request, keep fresh inference in the current workflow rather than creating an unrelated cache file. For a convention-dependent change, a missing `.ae/project.yml` may be created alongside the requested work and must be reported like every new file. Never overwrite an existing profile without approval.
+- Keep fresh inference ephemeral by default. Do not add `.ae/project.yml` to a repository as a side effect of model, source, test, documentation, or review work. Persist a profile only when the user explicitly asks to save/share conventions or directly requests project profiling; never overwrite a human-edited profile silently.
 - The inference is static. It never executes dbt and never contacts a warehouse.
 
 ## Let strength decide whether to act or ask

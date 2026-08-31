@@ -52,7 +52,7 @@ Define:
 
 For every material choice, cite a local file, stakeholder-provided statement, policy, canonical contract, or explicit approved assumption. For competing definitions, show the exact difference and affected consumers. Never present a name, label, comment, or inferred source grain as proof of business meaning.
 
-Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+Use formal **Evidence**, **Risk**, **Recommendation**, and **Verification** findings with severity and confidence when reviewing competing definitions or reporting material semantic risk. For straightforward contract authoring, report Changed, Why, Verified, and Remaining uncertainty.
 
 ## Failure modes
 
@@ -65,7 +65,7 @@ Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, an
 
 ## Output contract
 
-Return `# Metric Definition` with: Readiness; Canonical name and meaning; Decision and consumers; Owner and approval; Formula; Population; Grain; Dimensions; Time semantics; Units and null behavior; Data readiness; Edge cases; Acceptance cases; Source evidence; Versioning and change policy; Open decisions.
+For straightforward contract authoring, return `# Metric Definition` with: Changed; Why, including formula, population, grain, and time semantics; Verified; Remaining uncertainty. For competing-definition reviews or migration decisions, add consumer impact, source evidence, versioning, approval state, and open decisions.
 
 State blocking decisions near the top. Include only open decisions that can change the metric; say none when repository and supplied evidence settle them.
 
@@ -81,5 +81,5 @@ State blocking decisions near the top. Include only open decisions that can chan
 
 - Local Basic only: use local files and user-provided material. Never call MCP, access a warehouse, or execute dbt.
 - Minimize sensitive fields and never expose credentials, raw personal data, or unreleased metric values.
-- New files may be created only when requested. Before editing or deleting any existing file, show the exact proposed change, state blast radius across downstream models, tests, exposures, semantic artifacts, and BI content, and obtain explicit approval.
+- Explicitly requested reversible contract-document edits may proceed without a second approval. Changing an already canonical definition, deleting files, or expanding scope requires a preview, downstream blast radius, and approval.
 - Do not silently change consumers when a canonical definition changes; report migration and comparability risk.

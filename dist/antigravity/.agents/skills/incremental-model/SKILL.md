@@ -40,8 +40,8 @@ Obtain the target model, business grain, update and delete behavior, event and i
 11. Check inherited partition, cluster, sort, strategy, and unique-key settings against actual model columns and the selected adapter.
 12. Define targeted tests for key uniqueness and non-nullness, duplicate replay, late updates, boundary timestamps, deletes, schema change, empty batches, first run, and incremental-versus-full equivalence where valid.
 13. For a review, report evidence-backed findings without editing. For a design or implementation request, propose the smallest configuration and SQL changes.
-14. Before editing or deleting any existing file, show the exact diff or precise change preview, disclose blast radius across downstream models, tests, exposures, BI artifacts, schedules, stored state, and full-refresh behavior, and obtain explicit approval. Stop before writing until approval arrives.
-15. After approval, apply only approved changes and repeat the static state-transition analysis.
+14. Apply explicitly requested, reversible model/configuration edits without asking for a second approval when grain, published contract, and stored-state behavior are preserved. Preview and obtain approval before changing those invariants, rewriting state, deleting or renaming files, or broadening scope.
+15. Apply only authorized changes and repeat the static state-transition analysis.
 
 ## Correctness invariants
 
@@ -69,13 +69,13 @@ Every actionable finding includes severity and confidence plus **Evidence**, **R
 - Filtering both source and destination in a way that cannot match older changed rows.
 - Treating successful incremental runs as proof that full refresh is safe.
 - Letting directory-level configuration name columns absent from the model.
-- Editing an existing model before preview, blast-radius disclosure, and approval.
+- Changing stored-state behavior, a published contract, or scope before preview, blast-radius disclosure, and approval.
 
 ## Output contract
 
-Return `# Incremental Model` with: Purpose and grain; Repository and adapter evidence; Source change model; Unique key; Watermark and lookback; Strategy and portability; Idempotency argument; Late data and deletes; Schema evolution; Full-refresh and backfill risk; Findings; Proposed files or diff; Verification plan; Approval needed; Residual unknowns.
+For implementation, return `# Incremental Model` with: Changed; Why, including grain, unique key, watermark/lookback, and adapter-supported strategy; Verified, including idempotency and late-data checks; Remaining uncertainty. For a review or risky migration, add evidence-backed findings, stored-state/full-refresh risk, blast radius, and approval gates.
 
-For reviews, order findings by severity. For new additive files, list every created path. For existing-file changes, stop at the approval gate until authorized.
+For reviews, order findings by severity. For implementations, report Changed, Why, Verified, and Remaining uncertainty. List every new path; stop only at the risk gates above.
 
 ## Verification
 
@@ -92,7 +92,7 @@ For reviews, order findings by severity. For new additive files, list every crea
 - Never call MCP, execute dbt, query a warehouse, run a pipeline, or perform a full refresh.
 - Never execute DDL or DML, mutate target state, or expose credentials and row-level sensitive data.
 - New files may be created without approval and every path must be reported.
-- Existing-file edits, deletions, and renames always require preview, blast-radius disclosure, and explicit approval immediately before the change.
+- Explicitly requested reversible edits may proceed when contract and stored-state behavior are preserved. State rewrites, contract changes, renames, deletions, and scope expansion require preview, blast-radius disclosure, and approval.
 
 ## What not to assume
 

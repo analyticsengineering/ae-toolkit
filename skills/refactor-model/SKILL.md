@@ -33,8 +33,8 @@ Obtain the target model, requested improvement, project root, and any declared c
 5. Compare the proposed implementation with the current one through each CTE. Check joins, fanout, filters, three-valued logic, aggregations, windows, deduplication order, casts, time zones, and incremental boundaries.
 6. Reject the refactor framing if preserving the contract is impossible. Route a name-only change to `rename-model` and an intentional contract change to `migration-plan`.
 7. Design the smallest change that removes the identified complexity while preserving every established invariant. Use only constructs and macros supported by repository and adapter evidence.
-8. Before editing or deleting any existing file, show an exact diff or precise change preview, state the blast radius across downstream models, tests, exposures, metrics, BI artifacts, and operations, and obtain explicit approval. Stop before writing until approval arrives.
-9. After approval, change only the approved files. New additive files may be created without approval, but list every path.
+8. When the user explicitly requested this contract-preserving refactor, apply the smallest reversible edits without asking for a second approval and show the resulting diff. If contract preservation is uncertain, the scope expands, or a rename/deletion is needed, preview the change and blast radius and obtain approval first.
+9. Change only files required by the request. New additive files may be created, but list every path.
 10. Re-read the before and after logic against every invariant and report anything that remains unverified.
 
 ## Preservation checks
@@ -59,12 +59,14 @@ Every actionable finding includes severity and confidence plus **Evidence**, **R
 - Assuming algebraically similar SQL has identical null, duplicate, or time behavior.
 - Removing a column because no SQL model references it while ignoring BI consumers.
 - Introducing an adapter-specific function absent from the repository.
-- Editing first and presenting the diff as approval.
+- Editing outside the explicit request or changing an uncertain contract without approval.
 - Claiming equivalence from compilation or formatting alone.
 
 ## Output contract
 
-Before approval, return `# Refactor Proposal` with: Goal; Current output contract; Convention evidence; Downstream blast radius; Proposed diff; Preservation argument; Failure risks; Verification plan; Approval needed.
+For an explicitly requested contract-preserving refactor, return `# Refactor` with: Changed; Why, including the preservation argument; Verified; Remaining uncertainty.
+
+When contract preservation is uncertain or the work crosses a rename, deletion, or scope boundary, return `# Refactor Proposal` instead with: Goal; Current output contract; Downstream blast radius; Proposed diff; Failure risks; Verification plan; Approval needed.
 
 After an approved implementation, return `# Refactor Result` with: Files changed; Contract preserved; Evidence; Verification performed; Residual uncertainty; Follow-up commands not run.
 
@@ -85,7 +87,7 @@ If evidence shows a contract change, return `# Not a Refactor` and identify the 
 - Never expose credentials, connection strings, PII, or unnecessary row-level values.
 - Never execute mutating SQL or destructive version-control commands.
 - New files may be created without approval and every path must be reported.
-- Existing-file edits, deletions, and renames always require preview, blast-radius disclosure, and explicit approval immediately before the change.
+- Explicitly requested reversible refactor edits may proceed after contract preservation is established. Renames, deletions, uncertain contracts, and scope expansion require preview, blast-radius disclosure, and approval.
 
 ## What not to assume
 

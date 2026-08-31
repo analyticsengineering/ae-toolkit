@@ -49,7 +49,7 @@ Require or mark missing:
 
 Cite the BI config, each definition file, upstream model expression, canonical contract clause, and consumer reference used. Labels and relationship declarations are intent, not proof of formulas, key uniqueness, or cardinality. Name unsupported or unreadable file formats and exclude them explicitly from consumer counts.
 
-Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+Use formal **Evidence**, **Risk**, **Recommendation**, and **Verification** findings with severity and confidence for reviews and material BI risks. For straightforward implementation, report Changed, Why, Verified, and Remaining uncertainty.
 
 ## Failure modes
 
@@ -63,7 +63,7 @@ Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, an
 
 ## Output contract
 
-Return `# BI Model` with: Detected platform and evidence; Canonical contract alignment; Upstream grain; Measures; Dimensions; Joins and fanout; Filters and access; Reuse and duplicate definitions; Findings; Proposed artifacts or changes; Unknowns; Verification plan.
+For implementation, return `# BI Model` with: Changed; Why, including platform convention, upstream grain, and canonical contract alignment; Verified; Remaining uncertainty. For a review, add evidence-backed findings about joins, fanout, duplicated definitions, access, and consumer risk.
 
 For implementation, show intended paths and concise native definitions. For review, lead with findings ordered by severity. If no BI platform is detected, return `NOT DETECTED` with searched paths and do not produce speculative vendor code.
 
@@ -79,5 +79,5 @@ For implementation, show intended paths and concise native definitions. For revi
 
 - Local Basic only: use local files and user-provided material. Never call MCP, access a warehouse, execute dbt, or contact a BI service.
 - Minimize field exposure and never print credentials, connection settings, raw personal data, or protected values.
-- New files may be created only when requested. Before editing or deleting any existing file, show the exact proposed change, state blast radius across upstream models, tests, exposures, shared BI objects, dashboards, and downstream consumers, and obtain explicit approval.
+- Explicitly requested reversible BI artifact edits may proceed without a second approval. Preview and obtain approval before changing metric meaning, access controls, shared contracts, deleting files, or expanding scope.
 - Flag row-level security or access-filter changes as potentially broad disclosure risks.

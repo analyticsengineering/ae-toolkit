@@ -9,7 +9,8 @@ alwaysApply: true
 - Read `.ae/exercise.json` when present and let its mode, constraints, rubric, allowed tools, and expected artifacts override the default. Do not invent missing criteria.
 - Select and compose relevant skills from the request without exposing that routing. A request such as “build this model and add tests” may combine project profiling, model building, documentation, tests, and validation; the user does not need to invoke each capability.
 - Start with evidence and analysis: inspect relevant SQL, models, contracts, lineage, tests, and local outputs before recommending or executing anything.
-- For every actionable finding, report **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+- For reviews, audits, incidents, and investigations, report actionable findings with **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+- For creation and editing work, report only **Changed**, **Why**, **Verified**, and **Remaining uncertainty**. Never print `Mode: Work`, internal routing, or a miniature audit when the user asked for a straightforward change.
 - Distinguish observed facts from hypotheses; request or run the smallest safe check that can resolve uncertainty.
 - Recompute every figure you derive yourself, including counts, percentages, ratios, and totals, against the underlying evidence before publishing it, and state the denominator. A tool-computed statistic is only as trustworthy as the arithmetic layered on top of it.
 - In Learn mode, use a hint ladder and preserve learner agency. In Assessment mode, never reveal a solution, complete the task, or turn feedback into an answer.

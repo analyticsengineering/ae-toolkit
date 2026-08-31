@@ -15,7 +15,7 @@ Behave like a teammate who has already read the repository. Never ask an analyti
 - Read `.ae/project.yml` when present and treat human edits in it as authoritative over any inference.
 - When it is absent and the task depends on a convention, run `python3 ".github/ae-toolkit/scripts/infer_conventions.py" <project-root> --json` before proposing names, files, tests, or SQL style.
 - Do this as an internal first step. Never require the user to run `/ae-learn` or explain the profiling machinery before ordinary work can begin.
-- For a read-only request, keep fresh inference in the current workflow rather than creating an unrelated cache file. For a convention-dependent change, a missing `.ae/project.yml` may be created alongside the requested work and must be reported like every new file. Never overwrite an existing profile without approval.
+- Keep fresh inference ephemeral by default. Do not add `.ae/project.yml` to a repository as a side effect of model, source, test, documentation, or review work. Persist a profile only when the user explicitly asks to save/share conventions or directly requests project profiling; never overwrite a human-edited profile silently.
 - The inference is static. It never executes dbt and never contacts a warehouse.
 
 ## Let strength decide whether to act or ask
@@ -70,7 +70,8 @@ The same applies in reverse. Do not suppress a real question to make a report lo
 - Read `.ae/exercise.json` when present and let its mode, constraints, rubric, allowed tools, and expected artifacts override the default. Do not invent missing criteria.
 - Select and compose relevant skills from the request without exposing that routing. A request such as “build this model and add tests” may combine project profiling, model building, documentation, tests, and validation; the user does not need to invoke each capability.
 - Start with evidence and analysis: inspect relevant SQL, models, contracts, lineage, tests, and local outputs before recommending or executing anything.
-- For every actionable finding, report **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+- For reviews, audits, incidents, and investigations, report actionable findings with **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+- For creation and editing work, report only **Changed**, **Why**, **Verified**, and **Remaining uncertainty**. Never print `Mode: Work`, internal routing, or a miniature audit when the user asked for a straightforward change.
 - Distinguish observed facts from hypotheses; request or run the smallest safe check that can resolve uncertainty.
 - Recompute every figure you derive yourself, including counts, percentages, ratios, and totals, against the underlying evidence before publishing it, and state the denominator. A tool-computed statistic is only as trustworthy as the arithmetic layered on top of it.
 - In Learn mode, use a hint ladder and preserve learner agency. In Assessment mode, never reveal a solution, complete the task, or turn feedback into an answer.
@@ -93,9 +94,11 @@ The same applies in reverse. Do not suppress a real question to make a report lo
 
 ## Repository writes
 
-- Creating a new file is permitted without prior approval, because it is additive and a user can revert it with git. List every path created in the output.
-- Editing or deleting an existing file requires showing the change and receiving approval first. Never silently rewrite work a person already committed.
+- An explicit user request to create or edit project-owned SQL, YAML, documentation, tests, or local analytics configuration authorizes the smallest reversible file changes needed for that request. Apply them without asking for a second toolkit-specific approval, then show what changed through the IDE diff and summary.
+- Creating a new file is permitted when it is part of the requested outcome. List every path created in the output.
+- Preview the exact change and obtain approval before renaming or deleting files, changing grain/schema/metric meaning or another published contract, applying a broad migration, or touching files outside the clearly requested scope.
+- Agent-initiated adjacent cleanup is not authorized by a narrow request. Propose it separately.
 - Never edit a file you have not read during this workflow.
-- Requests for approval state blast radius: downstream models, tests, exposures, and BI artifacts that depend on the file.
-- The same content can fall on either side of this line, and that is intended. Under model-level YAML, documentation for a new model is a new file and lands automatically; under a single grouped YAML, the identical content is an edit and needs approval.
+- Approval requests state blast radius: downstream models, tests, exposures, semantic resources, and BI artifacts that depend on the change.
+- Warehouse access, production actions, external transmission, destructive operations, and other non-file side effects always keep their own explicit approval or denial boundaries.
 - Never run destructive version-control operations, including history rewrites, force pushes, resets that discard work, or branch deletion.

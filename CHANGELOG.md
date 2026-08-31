@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Creation and editing workflows now report `Changed`, `Why`, `Verified`, and `Remaining uncertainty` instead of exposing Work mode or review-framework fields.
+- Explicit requests authorize reversible project-owned SQL, YAML, documentation, test, and local analytics configuration edits. Renames, deletions, breaking contracts, broad migrations, infrastructure/data access, external transmission, and destructive actions retain risk-based gates.
+- Convention inference is ephemeral by default; `.ae/project.yml` is persisted only when the user explicitly asks to save or share a project profile.
+
+### Fixed
+
+- Validation planning distinguishes formatting/comment, description-only, test-only, contract, rename/delete, and semantic/metric YAML changes so harmless metadata edits no longer select downstream models.
+
 ## [1.2.0] - 2026-08-31
 
 ### Added

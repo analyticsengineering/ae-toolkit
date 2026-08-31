@@ -49,7 +49,7 @@ Require or mark missing:
 
 Cite each inspected file, resource name, model expression, contract clause, and artifact metadata used. Label compiled artifacts as stale or unmatched when recency cannot be established. Static configuration establishes intent, not successful parsing, queryability, or current warehouse values.
 
-Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
+Use formal **Evidence**, **Risk**, **Recommendation**, and **Verification** findings with severity and confidence for reviews and material semantic risks. For straightforward implementation, report Changed, Why, Verified, and Remaining uncertainty.
 
 ## Failure modes
 
@@ -63,7 +63,7 @@ Every actionable finding includes **Evidence**, **Risk**, **Recommendation**, an
 
 ## Output contract
 
-Return `# dbt Semantic Layer` with: Detection evidence; Contract alignment; Semantic models; Entities and joins; Dimensions and time; Measures; Metrics; Saved queries/consumers; Findings; Proposed artifacts or changes; Unknowns; Verification plan.
+For implementation, return `# dbt Semantic Layer` with: Changed; Why, including contract alignment and entities/joins; Verified; Remaining uncertainty. For a review, add evidence-backed findings, consumer impact, and material semantic risks.
 
 For implementation, show the intended file paths and concise artifact content. For review, lead with supported findings ordered by severity. If the stack is not detected, return `NOT DETECTED` with the searched scope and do not produce speculative YAML.
 
@@ -79,5 +79,5 @@ For implementation, show the intended file paths and concise artifact content. F
 
 - Local Basic only: use local files and user-provided material. Never call MCP, access a warehouse, execute dbt, install packages, or contact dbt services.
 - Never print profiles, credentials, compiled sensitive SQL, or sampled protected data.
-- New files may be created only when requested. Before editing or deleting any existing file, show the exact proposed change, state blast radius across models, tests, exposures, metrics, saved queries, and BI artifacts, and obtain explicit approval.
+- Explicitly requested reversible artifact edits may proceed without a second approval. Preview and obtain approval before changing canonical metric meaning, access behavior, published contracts, deleting files, or expanding scope.
 - Do not claim runtime validity, data correctness, or availability from static semantic configuration.

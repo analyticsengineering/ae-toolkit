@@ -34,8 +34,8 @@ Read `.ae/project.yml` first. Human-edited values are authoritative. If it is ab
 5. Add descriptions, freshness, `loaded_at_field`, quoting, or tests only when local configuration, contracts, or neighboring sources justify them. Keep business promises such as freshness explicitly sourced.
 6. Validate every proposed `source()` call against the declared source and table names and identify models affected by a rename or replacement.
 7. If staging models are requested, compose with `build-model` and hand off the resolved `source()` names, relation grain, and evidenced columns; do not make the user start another workflow.
-8. Create new files freely. Before any existing-file edit or deletion, show the exact diff and blast radius across models, tests, exposures, and BI artifacts, then wait for approval.
-9. If composing with `build-model`, return control with the resolved `source()` name, declaration path, evidence, and any approval gate; do not redo model SQL, documentation, or model-test work.
+8. Apply explicitly requested, reversible source-YAML and staging-reference edits without asking for a second approval. Preview and ask before a rename, deletion, contract change, or broader edit outside the requested scope.
+9. If composing with `build-model`, return control with the resolved `source()` name, declaration path, evidence, and any risk gate; do not redo model SQL, documentation, or model-test work.
 
 ## Evidence required
 
@@ -48,12 +48,12 @@ Cite the local file or user-provided requirement establishing each physical rela
 - Adding freshness without a supported load timestamp or availability promise.
 - Treating model tests or descriptions as source setup merely because they share YAML.
 - Renaming a source without tracing downstream `source()` calls.
-- Editing grouped YAML before previewing the diff and receiving approval.
+- Editing outside the requested source scope or changing a contract without preview and approval.
 - Running dbt or querying a warehouse to compensate for missing local evidence.
 
 ## Output contract
 
-Return `# Source Setup` with: Mode; Sources declared or reviewed; Evidence and conventions; Files created; Existing changes awaiting approval; Blast radius; Failure risks and assumptions; Verification. For each actionable finding include severity, confidence, Evidence, Risk, Recommendation, and Verification.
+For ordinary creation or editing, return `# Source Setup` with: Changed; Why; Verified; Remaining uncertainty. Include paths and the source names created or updated. Use formal severity and evidence findings only when reviewing source quality or reporting a material risk.
 
 ## Verification
 
@@ -69,5 +69,5 @@ Return `# Source Setup` with: Mode; Sources declared or reviewed; Evidence and c
 - Local Basic only: read local files and use static local tools; never call MCP, execute dbt, or contact a warehouse.
 - Never include credentials, connection strings, profile targets, PII, or sampled rows.
 - New files are additive and may be created; list every path.
-- Existing-file edits or deletions require an exact preview, blast radius, and explicit approval.
+- Explicitly requested reversible source-YAML edits may proceed; renames, deletions, contract changes, and scope expansion require preview, blast radius, and approval.
 - Never perform destructive version-control or database operations.

@@ -71,7 +71,7 @@ Name the grain and the evidence for it. Cite the upstream file and column for ev
 
 There are two contracts, and step 4 selects which one applies.
 
-When the grain is resolved, return `# Model Build` with: Grain and why; Inputs and their keys; Conventions applied; Files created; Changes needing approval; Tests added and what each protects; Verification steps; Open risks. Under Grain and why, state what ruled the other candidate out, not merely what the chosen grain is.
+When the grain is resolved, return `# Model Build` with: Changed, including every path; Why, including grain, inputs, keys, and conventions and what ruled the other grain candidate out; Verified, including tests and static reference checks; Remaining uncertainty. Never print `Mode: Work` or internal skill routing.
 
 When two grains survive, return `# Grain Decision Needed` instead, with: The question, naming both candidates as one row per X against one row per Y; What each choice implies for the requested measures, including which become non-additive; Conventions already inferred, with support counts, so the answer does not have to be re-supplied; Inputs and their keys; What will be built once the grain is chosen. Create no model, documentation, or test file in this branch. This is a complete, successful response, not a refusal.
 
@@ -90,7 +90,7 @@ List conventions as applied decisions with their support counts, not as question
 
 - Static construction only. Never execute dbt, query a warehouse, or call MCP to build a model.
 - Creating a new model file, a new documentation file, or a new test file is additive and permitted; report every path created.
-- Editing an existing YAML file, model, or macro requires showing the change and receiving approval first.
+- Explicitly requested reversible SQL/YAML/test/documentation edits may proceed without a second approval. Contract changes, renames, deletions, and edits outside the requested scope require preview, blast radius, and approval.
 - Never embed credentials, connection strings, or sampled row values in a model or its documentation.
 
 ## What not to assume

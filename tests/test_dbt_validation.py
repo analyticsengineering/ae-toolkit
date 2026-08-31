@@ -57,17 +57,87 @@ class ValidationPlannerTests(unittest.TestCase):
         self.assertIn("--target dev", plan["commands"][-1]["command"])
         self.assertNotIn("--full-refresh", plan["commands"][-1]["command"])
 
-    def test_yaml_contract_change_expands_only_its_documented_models(self) -> None:
+    def test_yaml_comments_descriptions_and_tests_do_not_expand_downstream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self.project(tmp)
             schema = root / "models" / "schema.yml"
             schema.write_text(schema.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
-            plan = planner.plan_validation(root, target="development", intent="test")
+            comments = planner.plan_validation(root, target="development", intent="test")
 
-        self.assertTrue(plan["scope"]["contract_change"])
-        self.assertTrue(plan["scope"]["models"])
-        self.assertTrue(all(selector.endswith("+") for selector in plan["scope"]["selectors"]))
-        self.assertNotIn("dbt test --target", plan["commands"][-1]["command"])
+            original = subprocess.run(
+                ["git", "-C", str(root), "show", "HEAD:models/schema.yml"],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            ).stdout
+            schema.write_text(
+                original.replace("description: Order fact table.", "description: Canonical order fact."),
+                encoding="utf-8",
+            )
+            descriptions = planner.plan_validation(root, target="development", intent="test")
+            schema.write_text(
+                original.replace("          - not_null", "          - not_null\n          - accepted_values", 1),
+                encoding="utf-8",
+            )
+            tests = planner.plan_validation(root, target="development", intent="test")
+
+        for plan, kind in (
+            (comments, "formatting_or_comments_only"),
+            (descriptions, "description_only"),
+            (tests, "test_only"),
+        ):
+            with self.subTest(kind=kind):
+                self.assertFalse(plan["scope"]["contract_change"])
+                self.assertEqual(plan["scope"]["yaml_change_kinds"]["models/schema.yml"], kind)
+                self.assertTrue(plan["scope"]["models"])
+                self.assertTrue(all(not selector.endswith("+") for selector in plan["scope"]["selectors"]))
+
+    def test_yaml_contract_and_deleted_resources_expand_downstream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            schema = root / "models" / "schema.yml"
+            original = schema.read_text(encoding="utf-8")
+            schema.write_text(
+                original.replace(
+                    "      - name: order_id\n        description: Stable order identifier.",
+                    "      - name: order_id\n        data_type: string\n        description: Stable order identifier.",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            contract = planner.plan_validation(root, target="development", intent="test")
+            schema.unlink()
+            deleted = planner.plan_validation(root, target="development", intent="test")
+
+        for plan, kind in ((contract, "contract"), (deleted, "rename_or_delete")):
+            with self.subTest(kind=kind):
+                self.assertTrue(plan["scope"]["contract_change"])
+                self.assertEqual(plan["scope"]["yaml_change_kinds"]["models/schema.yml"], kind)
+                self.assertTrue(plan["scope"]["models"])
+                self.assertTrue(all(selector.endswith("+") for selector in plan["scope"]["selectors"]))
+
+    def test_semantic_changes_resolve_consumers_but_need_model_scope_to_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            semantic = root / "models" / "semantic.yml"
+            semantic.write_text(
+                "semantic_models:\n  - name: orders\n    model: ref('fct_orders')\n"
+                "metrics:\n  - name: order_count\n    type: simple\n",
+                encoding="utf-8",
+            )
+            plan = planner.plan_validation(root, target="development", intent="build")
+
+        self.assertEqual(
+            plan["scope"]["semantic_resources"],
+            [
+                {"resource_type": "metric", "name": "order_count"},
+                {"resource_type": "semantic_model", "name": "orders"},
+            ],
+        )
+        self.assertEqual(plan["scope"]["resolution_selectors"], ["order_count+", "orders+"])
+        self.assertIn("explicit affected model scope", plan["blocked_reason"])
+        self.assertNotIn("build", [step["command"].split()[1] for step in plan["commands"]])
 
     def test_missing_or_production_target_blocks_warehouse_step(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

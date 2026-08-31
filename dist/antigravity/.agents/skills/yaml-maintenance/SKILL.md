@@ -33,8 +33,8 @@ Read `.ae/project.yml` first and treat human edits as authoritative. If absent, 
 4. Trace YAML anchors, aliases, docs references, package macros, selectors, and cross-file dependencies that a move or split could affect.
 5. Choose the repository's established grouped, domain, directory, or model-level layout. Do not reorganize valid YAML solely to impose a preferred style.
 6. Preserve comments where the parser and edit method allow it. Report comments or formatting that cannot be preserved exactly.
-7. New YAML files may be created freely. Any edit, move, replacement, or deletion involving an existing file requires an exact before/after diff and blast radius across models, tests, sources, exposures, selectors, and BI artifacts, followed by explicit approval.
-8. After approval, make the smallest structural change and reparse every affected YAML file.
+7. Apply explicitly requested, semantics-preserving edits to project-owned YAML without asking for a second approval. Preview the exact before/after structure and ask before moving, replacing, or deleting files, changing effective values, or expanding beyond the requested resources.
+8. Make the smallest authorized structural change and reparse every affected YAML file.
 9. When composing with another skill, consume its decided semantic payload and return paths, structural diff, preserved invariants, and approval status; do not redo its domain analysis.
 
 ## Evidence required
@@ -49,12 +49,12 @@ Cite every duplicate, stale reference, invalid key, and layout convention by fil
 - Merging duplicate resource patches without checking for conflicting properties.
 - Assuming a parser preserves ordering, quoting, or comments.
 - Treating source, documentation, or test design as YAML maintenance.
-- Editing, moving, or deleting existing files before diff preview and approval.
+- Moving, deleting, changing semantics, or expanding scope before diff preview and approval.
 - Running dbt to discover errors that local parsing can identify.
 
 ## Output contract
 
-Return `# YAML Maintenance` with: Mode; Structural issue; Effective-content invariants; Proposed file map; Evidence and conventions; Files created; Existing changes awaiting approval; Blast radius; Conflicts and failure risks; Verification. For each actionable finding include severity, confidence, Evidence, Risk, Recommendation, and Verification.
+For ordinary structural work, return `# YAML Maintenance` with: Changed; Why; Verified; Remaining uncertainty. Name preserved semantic invariants and any formatting or comments that could not be retained. Use formal severity and evidence findings only when auditing YAML quality or reporting a material risk.
 
 ## Verification
 
@@ -70,5 +70,5 @@ Return `# YAML Maintenance` with: Mode; Structural issue; Effective-content inva
 - Local Basic only: use repository files and static local tools; never call MCP, execute dbt, or contact a warehouse.
 - Do not expose credentials, connection strings, profile targets, PII, or raw row values found in YAML.
 - New files may be created and must be listed.
-- Existing-file edits, moves, or deletions require exact diff preview, blast radius, and explicit approval.
+- Explicitly requested semantics-preserving YAML edits may proceed; moves, replacements, deletions, semantic changes, and scope expansion require preview, blast radius, and approval.
 - Never perform destructive version-control or database operations.
