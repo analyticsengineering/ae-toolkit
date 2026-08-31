@@ -375,11 +375,26 @@ def build_target(target: Target, out_root: Path) -> None:
     write(out_root / "AGENTS.md", build_agents_md(target, shipped))
 
 
+def _generated_files(root: Path) -> set[Path]:
+    """Files this build owns, ignoring bytecode the interpreter leaves behind.
+
+    Running a shipped script writes `__pycache__` beside it, and reporting that
+    as drift sends a reader to rebuild a target that is not actually stale.
+    """
+    return {
+        path.relative_to(root)
+        for path in root.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
+    }
+
+
 def differences(fresh: Path, committed: Path) -> list[str]:
     """Compare two trees by content, reporting every path that disagrees."""
     problems: list[str] = []
-    fresh_files = {p.relative_to(fresh) for p in fresh.rglob("*") if p.is_file()}
-    committed_files = {p.relative_to(committed) for p in committed.rglob("*") if p.is_file()}
+    fresh_files = _generated_files(fresh)
+    committed_files = _generated_files(committed)
 
     problems.extend(f"missing from committed output: {p}" for p in sorted(fresh_files - committed_files))
     problems.extend(f"stale file in committed output: {p}" for p in sorted(committed_files - fresh_files))
