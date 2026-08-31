@@ -170,15 +170,24 @@ CREDENTIAL_LOOKUP = re.compile(
 )
 
 
-def _looks_like_placeholder(value: str) -> bool:
+def _looks_like_placeholder(value: str, *, quoted: bool = True) -> bool:
     normalized = value.strip().strip("\"'").lower()
-    return (
+    if (
         normalized in PLACEHOLDERS
         or normalized.startswith(("${", "{{", "<"))
         or normalized.endswith(("}}", ">"))
         or set(normalized) <= {"*", "x", "X", "-"}
         or bool(CREDENTIAL_LOOKUP.match(value.strip()))
-    )
+    ):
+        return True
+
+    # An unquoted value containing a call is code that produces a value, not a
+    # value: `token = uuid.uuid4().hex` is a generated identifier, and
+    # `secret = build_secret()` is a function. A literal secret written without
+    # quotes cannot contain a call, and the formats that do appear unquoted --
+    # JWTs, hex digests, base64 keys -- have no parentheses, so this excludes
+    # expressions without excusing anything that is actually a credential.
+    return not quoted and "(" in value
 
 
 def _span_for_match(spec: PatternSpec, match: re.Match[str]) -> tuple[int, int]:
@@ -197,7 +206,8 @@ def find_secrets(text: str) -> list[SecretMatch]:
             if start < 0 or end <= start:
                 continue
             if spec.kind == "password_or_token_assignment" and _looks_like_placeholder(
-                text[start:end]
+                text[start:end],
+                quoted=bool(match.groupdict().get("quoted_secret")),
             ):
                 continue
             candidates.append(SecretMatch(spec.kind, start, end, spec.confidence))

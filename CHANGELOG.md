@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Reference documents named in the always-applied rules, the reviewer and pipeline agents, and the freshness workflow now resolve on every host. They were written as bare paths such as `references/privacy.md`, which pointed at the user's own repository rather than the toolkit, so the privacy handling, severity scale, terminology, and warehouse-portability guidance were unreachable wherever those files did not happen to exist. The rule still read as enforced while the document it delegates to was missing.
 - Generation retargets reference paths as well as script paths, and a test now rejects any runtime path that resolves neither beside its own document nor under the shipped toolkit root.
 - The secret detector no longer reports `api_key=os.environ[...]` as a hardcoded credential. Flagging the correct way to handle a secret produced warnings on the files most deserving of trust, and the habit that builds is the real cost.
+- The secret detector no longer reports an unquoted assignment from a function call, such as `token = uuid.uuid4().hex`, as a token. A literal credential written without quotes cannot contain a call, and the unquoted formats that do occur -- JWTs, hex digests, base64 keys -- have no parentheses, so quoted literals and bare high-entropy values are still caught.
 
 ### Changed
 
