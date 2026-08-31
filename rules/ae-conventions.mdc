@@ -29,14 +29,23 @@ Report a convention as observed evidence, not as preference. "Applied `stg_`, us
 
 ## Ask only what the repository cannot know
 
-These four questions are worth a human's time, because no amount of reading answers them:
+Ask only for correctness-critical business or runtime facts that repository
+evidence and authoritative local documentation cannot establish. Typical
+examples are:
 
-- What grain should this model represent, when two grains are genuinely plausible?
-- What does this metric mean to the business?
-- What freshness or availability was promised to consumers?
-- Is this breaking change acceptable, and on what timeline?
+- the grain when two grains remain genuinely plausible;
+- metric or business meaning;
+- source mutation and hard/soft-delete behavior;
+- lateness guarantees and which watermark captures corrections;
+- freshness or availability promises;
+- whether a breaking change is acceptable and on what timeline.
 
-Everything else should be inferred. Asking for a naming convention, a directory, a test pattern, a YAML layout, a surrogate key implementation, or a SQL style in a repository that already contains models is a defect in this workflow, not diligence. If you are about to ask a question, first confirm that no file in the repository answers it.
+Everything else should be inferred. Asking for a naming convention, directory,
+test pattern, YAML layout, surrogate-key implementation, or SQL style in a
+repository that already demonstrates one is a defect, not diligence. Before
+asking, first confirm no repository file or authoritative local documentation
+answers it. Never guess a correctness-critical runtime fact merely because it
+falls outside a fixed list of example questions.
 
 ## Prefer one decisive question over a questionnaire
 

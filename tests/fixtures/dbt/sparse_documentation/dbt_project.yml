@@ -1,0 +1,5 @@
+name: sparse_documentation
+version: 1.0.0
+config-version: 2
+profile: sparse_documentation
+model-paths: ["models"]

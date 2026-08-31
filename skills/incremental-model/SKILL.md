@@ -18,7 +18,7 @@ Design or review incremental state transitions so repeated and delayed inputs pr
 
 Read `.ae/exercise.json` when present and honor its mode and constraints. Otherwise default silently to **Work**. In Learn mode, use progressive hints. In Assessment mode, evaluate the submission without editing or constructing the answer.
 
-Obtain the target model, business grain, update and delete behavior, event and ingestion timestamps, expected lateness, history requirement, current materialization, and stated freshness promise. Ask only when grain, business meaning, freshness, or acceptable breaking behavior remains genuinely undecidable.
+Obtain the target model, business grain, update and delete behavior, event and ingestion timestamps, expected lateness, history requirement, current materialization, and stated freshness promise. Ask one focused question when a correctness-critical runtime fact remains genuinely undecidable after inspecting repository evidence and authoritative local documentation. In particular, never guess whether existing rows can change or disappear, which timestamp advances on a correction, or how late changes can arrive.
 
 ## Procedure
 

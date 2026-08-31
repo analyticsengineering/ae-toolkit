@@ -29,7 +29,7 @@ Default silently to Work mode and produce a profile ready to use. In Learn mode,
 2. Run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json`. Treat its tallies as the evidence base; do not restate conventions from memory of another repository.
 3. Read `.ae/project.yml` if it exists and compare its stored profile fingerprint against fresh inference. Report a changed fingerprint as staleness, then compare values; a human edit outranks an inference and must not be silently overwritten.
 4. Inspect the highest-signal disagreements directly. When a convention is `split`, open the contradicting files named in `examples` and determine whether the split is a real disagreement or an artifact of layering, vendored packages, or a legacy directory mid-migration.
-5. Separate the counted conventions from the uncounted ones. Materializations, schedules, and orchestration are declared configuration, not inferred patterns, and are reported as facts.
+5. Separate **house conventions** from **observed resource patterns/contracts**. SQL/YAML style, test keys, naming, and surrogate-key implementations can be team-wide conventions. A source's `loaded_at_field` and freshness thresholds are resource contracts that can correctly differ by ingestion system, domain, or SLA; report them by source/table and never turn their majority into a default for an unrelated source. Materializations, schedules, and orchestration are declared configuration, not inferred patterns, and are reported as facts.
 6. Identify what the repository cannot answer at all, and carry those forward as open questions rather than defaults.
 
 ## Decision framework
@@ -48,6 +48,7 @@ A young repository legitimately produces mostly `weak` conventions. Reporting th
 - Asking the user which naming convention they use when the models answer it.
 - Filling a required output section with an invented question because the repository left it empty.
 - Presenting an inference as a team decision, or a personal preference as an inference.
+- Treating the most common source load field or freshness SLA as a team-wide convention.
 - Overwriting hand-edited profile values with a fresh inference.
 - Reading a vendored `dbt_packages` directory as if it were the team's own code.
 - Averaging away a genuine split so the profile looks complete.
@@ -60,7 +61,7 @@ Every convention cites its supporting count, contradicting count, and at least o
 
 ## Output contract
 
-Return `# Project Profile` with: Detected stack; Conventions by strength; Open questions; Drift from stored profile; Proposed `.ae/project.yml`; What to confirm. Add `Inference corrections` only under the condition described below.
+Return `# Project Profile` with: Detected stack; House conventions by strength; Observed resource patterns/contracts; Open questions; Drift from stored profile; Proposed `.ae/project.yml`; What to confirm. Add `Inference corrections` only under the condition described below.
 
 Present conventions as "detected from N models," and put every `split` convention in Open questions with its candidates. Ask for confirmation of the whole profile once rather than field by field.
 

@@ -76,6 +76,10 @@ class DayToDayWorkflowContractTests(unittest.TestCase):
             "python",
             "downstream",
         )
+        rename = self.skill("rename-model")
+        self.assertIn("column", rename)
+        self.assertIn("private/internal", rename)
+        self.assertIn("published", rename)
 
     def test_incremental_design_handles_late_data_and_replay(self) -> None:
         self.assert_terms(
@@ -87,6 +91,34 @@ class DayToDayWorkflowContractTests(unittest.TestCase):
             "on_schema_change",
             "full-refresh",
         )
+        incremental = self.skill("incremental-model")
+        for critical_fact in ("change or disappear", "timestamp advances", "late changes"):
+            self.assertIn(critical_fact, incremental)
+
+    def test_question_policy_allows_unknown_correctness_critical_runtime_facts(self) -> None:
+        policy = (PLUGIN_ROOT / "rules" / "ae-conventions.mdc").read_text(encoding="utf-8")
+
+        self.assertIn("correctness-critical business or runtime facts", policy)
+        self.assertIn("source mutation", policy)
+        self.assertIn("hard/soft-delete", policy)
+        self.assertIn("watermark", policy)
+        self.assertNotIn("These four questions", policy)
+
+    def test_build_model_treats_unprefixed_final_models_as_evidence(self) -> None:
+        build = self.skill("build-model")
+
+        self.assertIn("unprefixed final layer", build)
+        self.assertIn("neighboring final models", build)
+        self.assertIn("not an absence", build)
+
+    def test_project_brain_separates_house_style_from_source_contracts(self) -> None:
+        profile = self.skill("project-profile")
+        source = self.skill("source-setup")
+
+        self.assertIn("house conventions", profile)
+        self.assertIn("observed resource patterns/contracts", profile)
+        self.assertIn("never turn their majority into a default", profile)
+        self.assertIn("not global house conventions", source)
 
     def test_metric_semantic_and_bi_boundaries_are_explicit(self) -> None:
         self.assert_terms(

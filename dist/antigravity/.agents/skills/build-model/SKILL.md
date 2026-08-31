@@ -5,7 +5,7 @@ description: Builds a new dbt model from existing upstream models, following the
 
 # Build Model
 
-Produce the model a teammate familiar with this repository would have written. Infer everything the repository states; ask only about grain and business meaning.
+Produce the model a teammate familiar with this repository would have written. Infer everything the repository states; ask only for correctness-critical business or runtime facts it cannot establish.
 
 ## When to use
 
@@ -24,7 +24,7 @@ Default silently to Work mode and build the model. In Learn mode, explain each m
 
 ## Build procedure
 
-1. Establish the convention profile before naming anything. Prefixes, directories, surrogate key implementation, YAML strategy, test defaults, and SQL style all come from the repository, not from a question.
+1. Establish the convention profile before naming anything. Prefixes, directories, surrogate key implementation, YAML strategy, test defaults, and SQL style all come from the repository, not from a question. When the requested layer has no prefix evidence, inspect neighboring final models, their directories, materializations, and upstream references before choosing a default. An established unprefixed final layer (for example `orders.sql` beside `customers.sql`) is a convention, not an absence.
 2. Inspect every named upstream model: its SQL, its documented columns, its tests, and what it references in turn. A column that no upstream model exposes does not exist, however natural its name.
 3. Determine each input's grain from its declared primary key, its uniqueness tests, or its aggregation. Where an input's grain is undeclared and untested, treat it as an assumption and record it.
 4. Determine the target grain, and stop here if two grains survive. Derive candidate grains from the keys of the inputs and the join paths between them, then apply the rule below. When the rule says to ask, the build ends at this step and you return the grain decision instead of a model. Do not continue to step 5 with an unresolved grain.
@@ -61,6 +61,7 @@ A request to create the files does not settle the grain. Most requests are phras
 - Adding uniqueness tests to a key that the join path cannot guarantee is unique.
 - Documenting the implementation rather than the meaning, so the description restates the SQL.
 - Writing files into a directory the repository does not use for that layer.
+- Inventing `fct_` or `dim_` because a legacy project expresses its final layer through unprefixed business names.
 - Accepting a directory's inherited `dbt_project.yml` configuration without checking that its partition, cluster, sort, or incremental settings are valid for the model's own columns.
 
 ## Evidence required

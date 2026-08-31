@@ -20,7 +20,7 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
 2. Run the static inspectors before proposing execution:
    - `python3 "${CURSOR_PLUGIN_ROOT}/scripts/inspect_dbt.py" <project-root> --pretty`
    - `python3 "${CURSOR_PLUGIN_ROOT}/scripts/inspect_git.py" <project-root> --pretty`
-3. Determine whether the user named a scope. If not, derive it only from changed dbt resources. Classify YAML changes: formatting/comments, descriptions, and tests validate the named model only; contract fields, renames, and deletions include downstream consumers; semantic/metric changes resolve affected consumers before any model build. Do not turn an unrelated dirty worktree into validation scope.
+3. Determine whether the user named a scope. If not, derive it only from changed dbt resources. Classify YAML changes: formatting/comments and descriptions are static; generic, unit, and source tests validate only their named resources; source freshness and loaded-at changes validate the affected source tables; contract fields, renames, and deletions include downstream consumers; semantic/metric changes resolve affected consumers before any model build. Parse `ref()` and `source()` calls in changed singular tests and select the exact test. Macro, package, or project-config changes require explicit affected model scope before warehouse work. Do not turn an unrelated dirty worktree into validation scope.
 4. Run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/plan_dbt_validation.py" <project-root> --intent <intent> [--model <name>] [--target <dev-target>] --pretty`.
 5. Review `recommended_intent`, its reason, and the plan rather than trusting either blindly. The planner omits an unnecessarily broad warehouse command for metadata-only or test-only changes unless `--allow-broader-intent` is deliberately supplied. Confirm every selected node exists, YAML changes map to the reported models, renamed resources include downstream consumers, and the scope is not global.
 6. Run static `dbt parse` and `dbt ls` steps one at a time when useful. Stop if selector resolution differs from the plan.
@@ -40,10 +40,11 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
 - `ls`: prove a selector resolves the intended resources.
 - `compile`: compiled SQL is needed to resolve uncertainty; treat as warehouse-capable because adapter macros may connect.
 - `test`: existing relations are current and only assertions need checking.
+- `source freshness`: a source's freshness or loaded-at configuration changed; select only that source table.
 - `run`: build is needed but tests are intentionally out of scope.
 - `build`: models and their tests both require validation; preferred final check for new model work.
 
-For inferred Git scope, formatting/comments and descriptions recommend static parse/selector checks, test-only YAML recommends `test`, model SQL or contract changes recommend `build`, and semantic changes require consumer resolution before warehouse work. An explicit model scope keeps the caller's requested intent. Never override a narrower user-requested check merely because the planner recommends `build`.
+For inferred Git scope, formatting/comments and descriptions recommend static parse/selector checks; changed singular tests and test-only model/source YAML recommend `test`; source freshness/loaded-at changes recommend source-specific freshness; model SQL or contract changes recommend `build`; and semantic, macro, package, and project-config changes require consumer resolution before warehouse work. These minima still apply when the caller names a model: `--allow-broader-intent` is the explicit upward override. Never override a narrower user-requested check merely because the planner recommends `build`.
 
 Never auto-run `deps`, `seed`, `snapshot`, `run-operation`, a global command, or any command with `--full-refresh`.
 

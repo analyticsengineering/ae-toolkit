@@ -267,6 +267,10 @@ OBSERVATION_META: dict[str, dict[str, Any]] = {
     "models.intermediate_directory": {"question": "Which directory should new intermediate models live in?"},
     "models.fact_directory": {"question": "Which directory should new fact models live in?"},
     "models.dimension_directory": {"question": "Which directory should new dimension models live in?"},
+    "models.final_naming": {
+        "question": "Do final models use a layer prefix or business names without one?"
+    },
+    "models.final_directory": {"question": "Which directory should unprefixed final models live in?"},
     "surrogate_key.macro": {"question": "Which surrogate key implementation should new models use?"},
     "yaml.strategy": {"question": "Should new model documentation go in its own file or an existing grouped file?"},
     "yaml.filename_pattern": {"question": "What filename should new documentation files use?"},
@@ -284,9 +288,12 @@ OBSERVATION_META: dict[str, dict[str, Any]] = {
         "question": "Should source tables declare warehouse identifiers?",
         "decode": _as_bool,
     },
-    "sources.loaded_at_field": {"question": "Which field represents source load time?"},
-    "sources.freshness_warn_after": {"question": "Which warning threshold should new sources use?"},
-    "sources.freshness_error_after": {"question": "Which error threshold should new sources use?"},
+    # These are observations, not house conventions. Different ingestion
+    # systems correctly use different load fields and SLAs. They remain in the
+    # evidence report, but never become defaults for an unrelated source.
+    "sources.loaded_at_field": {"resource_pattern": True},
+    "sources.freshness_warn_after": {"resource_pattern": True},
+    "sources.freshness_error_after": {"resource_pattern": True},
     "sources.filename_pattern": {"question": "How should source YAML files be named?"},
     "incremental.strategy": {"question": "Which incremental strategy should new models use?"},
     "incremental.unique_key_style": {"question": "How should incremental unique keys be declared?"},
@@ -297,7 +304,7 @@ OBSERVATION_META: dict[str, dict[str, Any]] = {
         "decode": _as_bool,
     },
     "documentation.column_descriptions_required": {
-        "question": "Should every column carry a description?",
+        "resource_pattern": True,
         "decode": _as_bool,
     },
 }
@@ -378,6 +385,13 @@ def _observe_models(root: Path, model_paths: list[str], tallies: dict[str, Tally
             tallies[f"models.{layer_name}_prefix"].add(prefix, relative)
             directory = path.parent.relative_to(root).as_posix()
             tallies[f"models.{layer_name}_directory"].add(directory, relative)
+        elif _looks_like_unprefixed_final(relative, text):
+            # Classic dbt projects often put final models such as orders.sql
+            # directly under models/. Absence of fct_/dim_ is itself evidence;
+            # it must not be replaced with a fashionable default.
+            tallies["models.final_naming"].add("unprefixed", relative)
+            directory = path.parent.relative_to(root).as_posix()
+            tallies["models.final_directory"].add(directory, relative)
 
         key_label = _surrogate_key_label(text, local_macros)
         if key_label:
@@ -385,6 +399,20 @@ def _observe_models(root: Path, model_paths: list[str], tallies: dict[str, Tally
 
         _observe_incremental(text, relative, tallies)
         _observe_sql_style(text, relative, tallies)
+
+
+def _looks_like_unprefixed_final(relative: str, text: str) -> bool:
+    parts = [part.lower() for part in Path(relative).parts]
+    parent_parts = set(parts[:-1])
+    if parent_parts & {"staging", "stage", "intermediate", "snapshots", "seeds"}:
+        return False
+    if parent_parts & {"marts", "mart", "reporting", "analytics", "final"}:
+        return True
+    # Root-level models that consume a recognized staging model are the common
+    # legacy shape (for example Jaffle Shop Classic's orders.sql).
+    return len(parts) == 2 and bool(
+        re.search(r"\bref\s*\(\s*['\"](?:stg|staging|stage|base|src)_", text, re.I)
+    )
 
 
 def _config_value(text: str, key: str) -> str | None:
@@ -475,11 +503,19 @@ def _column_tests(column: dict[str, Any]) -> tuple[list[str], str | None]:
     return [], None
 
 
-def _observe_yaml(root: Path, yaml_paths: list[str], tallies: dict[str, Tally]) -> dict[str, Any]:
-    documented_models = 0
-    documented_columns = 0
+def _observe_yaml(
+    root: Path,
+    yaml_paths: list[str],
+    model_paths: list[str],
+    tallies: dict[str, Tally],
+) -> dict[str, Any]:
+    yaml_model_entries = 0
+    declared_columns = 0
+    described_columns = 0
     sources: list[dict[str, Any]] = []
+    source_contracts: list[dict[str, Any]] = []
     grouped_files: list[tuple[str, list[str]]] = []
+    model_documentation: dict[str, tuple[bool, str]] = {}
 
     for relative in yaml_paths:
         document = parse_yaml(inspect_dbt._read_text(root / relative))
@@ -487,11 +523,16 @@ def _observe_yaml(root: Path, yaml_paths: list[str], tallies: dict[str, Tally]) 
         if models:
             grouped_files.append((relative, [str(model["name"]) for model in models]))
         for model in models:
-            documented_models += 1
+            yaml_model_entries += 1
             description = model.get("description")
-            tallies["documentation.model_descriptions_required"].add(
-                "true" if isinstance(description, str) and description.strip() else "false",
-                relative,
+            model_name = str(model["name"])
+            described_here = bool(isinstance(description, str) and description.strip())
+            described_before, previous_path = model_documentation.get(
+                model_name, (False, relative)
+            )
+            model_documentation[model_name] = (
+                described_before or described_here,
+                relative if described_here else previous_path,
             )
             columns = model.get("columns") if isinstance(model.get("columns"), list) else []
             identifier_columns = 0
@@ -499,8 +540,10 @@ def _observe_yaml(root: Path, yaml_paths: list[str], tallies: dict[str, Tally]) 
             for column in columns:
                 if not isinstance(column, dict) or not column.get("name"):
                     continue
-                documented_columns += 1
+                declared_columns += 1
                 column_description = column.get("description")
+                if isinstance(column_description, str) and column_description.strip():
+                    described_columns += 1
                 tallies["documentation.column_descriptions_required"].add(
                     "true" if isinstance(column_description, str) and column_description.strip() else "false",
                     relative,
@@ -522,21 +565,70 @@ def _observe_yaml(root: Path, yaml_paths: list[str], tallies: dict[str, Tally]) 
             for source in document["sources"]:
                 if isinstance(source, dict) and source.get("name"):
                     sources.append(source)
-                    _observe_source(source, relative, tallies)
+                    source_contracts.extend(_observe_source(source, relative, tallies))
                     tallies["sources.filename_pattern"].add(
                         _source_filename_pattern(Path(relative), str(source["name"])),
                         relative,
                     )
 
+    # The denominator is every project-owned SQL model, not only the subset
+    # already present in YAML. Sparse YAML must never look like a strong
+    # documentation convention.
+    for model_path in model_paths:
+        model_name = Path(model_path).stem
+        described, example = model_documentation.get(model_name, (False, model_path))
+        tallies["documentation.model_descriptions_required"].add(
+            "true" if described else "false",
+            example,
+        )
+    project_model_names = {Path(path).stem for path in model_paths}
+    described_models = sum(
+        1
+        for name, (described, _) in model_documentation.items()
+        if name in project_model_names and described
+    )
+
     _observe_yaml_strategy(grouped_files, tallies)
     return {
-        "documented_model_count": documented_models,
-        "documented_column_count": documented_columns,
+        "yaml_model_entry_count": yaml_model_entries,
+        "documented_model_count": described_models,
+        "declared_column_count": declared_columns,
+        "documented_column_count": described_columns,
         "source_count": len(sources),
+        "source_contracts": source_contracts,
     }
 
 
-def _observe_source(source: dict[str, Any], relative: str, tallies: dict[str, Tally]) -> None:
+def _configured(resource: dict[str, Any], key: str) -> Any:
+    """Read both legacy direct properties and modern dbt `config:` placement."""
+    config = resource.get("config")
+    if isinstance(config, dict) and key in config:
+        return config.get(key)
+    return resource.get(key)
+
+
+def _freshness_value(resource: dict[str, Any]) -> dict[str, Any] | None:
+    value = _configured(resource, "freshness")
+    return value if isinstance(value, dict) else None
+
+
+def _thresholds(freshness: dict[str, Any] | None) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for level in ("warn_after", "error_after"):
+        threshold = freshness.get(level) if freshness else None
+        if not isinstance(threshold, dict):
+            continue
+        count, period = threshold.get("count"), threshold.get("period")
+        if count is not None and period:
+            result[level] = f"{count} {period}"
+    return result
+
+
+def _observe_source(
+    source: dict[str, Any],
+    relative: str,
+    tallies: dict[str, Tally],
+) -> list[dict[str, Any]]:
     database = source.get("database")
     if database is not None:
         tallies["sources.database"].add(str(database), relative)
@@ -547,8 +639,9 @@ def _observe_source(source: dict[str, Any], relative: str, tallies: dict[str, Ta
         tallies["sources.schema_style"].add(style, relative)
 
     tables = source.get("tables") if isinstance(source.get("tables"), list) else []
-    has_freshness = bool(source.get("freshness")) or any(
-        isinstance(table, dict) and table.get("freshness") for table in tables
+    source_freshness = _freshness_value(source)
+    has_freshness = bool(source_freshness) or any(
+        isinstance(table, dict) and _freshness_value(table) for table in tables
     )
     tallies["sources.freshness_required"].add("true" if has_freshness else "false", relative)
     identifiers = [
@@ -562,26 +655,37 @@ def _observe_source(source: dict[str, Any], relative: str, tallies: dict[str, Ta
             relative,
         )
 
-    loaded_at = source.get("loaded_at_field")
+    loaded_at = _configured(source, "loaded_at_field")
     if isinstance(loaded_at, str) and loaded_at.strip():
         tallies["sources.loaded_at_field"].add(loaded_at.strip(), relative)
 
-    freshness_blocks = [source.get("freshness")]
-    freshness_blocks.extend(
-        table.get("freshness")
-        for table in tables
-        if isinstance(table, dict) and table.get("freshness")
-    )
+    freshness_blocks = [source_freshness]
+    freshness_blocks.extend(_freshness_value(table) for table in tables if isinstance(table, dict))
     for freshness in freshness_blocks:
-        if not isinstance(freshness, dict):
+        for level, threshold in _thresholds(freshness).items():
+            tallies[f"sources.freshness_{level}"].add(threshold, relative)
+
+    source_name = str(source["name"])
+    contracts: list[dict[str, Any]] = []
+    for table in tables:
+        if not isinstance(table, dict) or not table.get("name"):
             continue
-        for level in ("warn_after", "error_after"):
-            threshold = freshness.get(level)
-            if not isinstance(threshold, dict):
-                continue
-            count, period = threshold.get("count"), threshold.get("period")
-            if count is not None and period:
-                tallies[f"sources.freshness_{level}"].add(f"{count} {period}", relative)
+        table_loaded_at = _configured(table, "loaded_at_field")
+        table_freshness = _freshness_value(table)
+        effective_loaded_at = table_loaded_at if table_loaded_at is not None else loaded_at
+        effective_freshness = table_freshness if table_freshness is not None else source_freshness
+        contracts.append(
+            {
+                "source": source_name,
+                "table": str(table["name"]),
+                "loaded_at_field": effective_loaded_at,
+                "freshness": _thresholds(effective_freshness),
+                "declared_in": relative,
+            }
+        )
+        if isinstance(table_loaded_at, str) and table_loaded_at.strip():
+            tallies["sources.loaded_at_field"].add(table_loaded_at.strip(), relative)
+    return contracts
 
 
 def _source_filename_pattern(path: Path, source_name: str) -> str:
@@ -674,10 +778,12 @@ def _repository_context(root: Path, yaml_paths: list[str]) -> dict[str, Any]:
     ]
     semantic_files = 0
     metric_files = 0
+    saved_query_files = 0
     for relative in yaml_paths:
         text = inspect_dbt._read_text(root / relative)
         semantic_files += int(bool(re.search(r"(?m)^\s*semantic_models\s*:", text)))
         metric_files += int(bool(re.search(r"(?m)^\s*metrics\s*:", text)))
+        saved_query_files += int(bool(re.search(r"(?m)^\s*saved_queries\s*:", text)))
 
     orchestration: list[str] = []
     for path in inspect_dbt._walk_files(root):
@@ -701,9 +807,10 @@ def _repository_context(root: Path, yaml_paths: list[str]) -> dict[str, Any]:
 
     return {
         "semantic_layer": {
-            "detected": bool(semantic_files or metric_files),
+            "detected": bool(semantic_files or metric_files or saved_query_files),
             "semantic_model_file_count": semantic_files,
             "metric_file_count": metric_files,
+            "saved_query_file_count": saved_query_files,
         },
         "bi": {
             "looker_detected": bool(lookml_files),
@@ -807,7 +914,7 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
 
     tallies = _tallies()
     _observe_models(root, model_paths, tallies)
-    documentation = _observe_yaml(root, yaml_paths, tallies)
+    documentation = _observe_yaml(root, yaml_paths, model_paths, tallies)
 
     evidence: dict[str, Any] = {}
     conventions: dict[str, Any] = {}
@@ -819,6 +926,8 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
         observation = conclude(tally.counts, tally.examples, decode=meta.get("decode"))
         evidence[key] = observation
         section, _, leaf = key.partition(".")
+        if meta.get("resource_pattern"):
+            continue
         if observation["strength"] in {"strong", "weak"}:
             conventions.setdefault(section, {})[leaf] = observation["value"]
         elif observation["strength"] == "split":
@@ -842,6 +951,8 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
             "model_count": len(model_paths),
             "excluded_vendored_files": vendored_count,
             "documented_model_count": documentation["documented_model_count"],
+            "yaml_model_entry_count": documentation["yaml_model_entry_count"],
+            "declared_column_count": documentation["declared_column_count"],
             "documented_column_count": documentation["documented_column_count"],
             "source_count": documentation["source_count"],
         }
@@ -853,6 +964,13 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
         "is_dbt_project": True,
         "project": facts,
         "profile": _stored_profile_state(root, facts["profile_fingerprint"]),
+        "resource_patterns": {
+            "sources": documentation["source_contracts"],
+            "note": (
+                "Loaded-at fields and freshness thresholds are resource contracts, "
+                "not global house conventions."
+            ),
+        },
         "conventions": {section: conventions[section] for section in sorted(conventions)},
         "open_questions": open_questions,
         "evidence": evidence,
@@ -925,6 +1043,7 @@ def to_project_yaml(result: dict[str, Any]) -> str:
         "version": 1,
         "project": result.get("project") or {},
         "conventions": result.get("conventions") or {},
+        "resource_patterns": result.get("resource_patterns") or {},
     }
     if result.get("open_questions"):
         document["open_questions"] = [

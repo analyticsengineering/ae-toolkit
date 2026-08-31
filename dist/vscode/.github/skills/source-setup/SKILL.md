@@ -28,7 +28,7 @@ Read `.ae/project.yml` first. Human-edited values are authoritative. If it is ab
 ## Procedure
 
 1. Identify the dbt project root and the exact external relations requested. Stop if no dbt project or relation identity can be established locally.
-2. Inspect existing source declarations, naming, YAML placement, schema/database patterns, quoting, freshness, tests, and model references.
+2. Inspect existing source declarations, naming, YAML placement, schema/database patterns, quoting, freshness, tests, and model references. Treat `loaded_at_field` and freshness thresholds as source/table contracts, not global house conventions; borrow them only from the same ingestion system or domain when evidence establishes that relationship.
 3. Search for duplicate logical or physical relations before proposing a new source. Reuse an existing declaration when it names the same relation.
 4. Derive source, table, and column names from the request and repository evidence. Do not infer columns from intuition.
 5. Add descriptions, freshness, `loaded_at_field`, quoting, or tests only when local configuration, contracts, or neighboring sources justify them. Keep business promises such as freshness explicitly sourced.

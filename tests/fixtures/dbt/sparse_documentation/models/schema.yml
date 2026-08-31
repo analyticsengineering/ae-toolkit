@@ -1,0 +1,12 @@
+version: 2
+models:
+  - name: model_1
+    description: First documented model.
+    columns:
+      - name: id
+        description: Identifier.
+  - name: model_2
+    description: Second documented model.
+    columns:
+      - name: id
+        description: Identifier.

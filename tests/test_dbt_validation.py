@@ -129,6 +129,162 @@ class ValidationPlannerTests(unittest.TestCase):
         self.assertFalse(overridden["broader_intent_requires_override"])
         self.assertEqual(overridden["commands"][-1]["command"].split()[1], "build")
 
+    def test_explicit_model_does_not_turn_a_description_edit_into_a_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            schema = root / "models" / "schema.yml"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace(
+                    "description: Order fact table.",
+                    "description: Canonical order fact.",
+                ),
+                encoding="utf-8",
+            )
+            minimal = planner.plan_validation(
+                root,
+                models=["fct_orders"],
+                target="development",
+                intent="build",
+            )
+            broader = planner.plan_validation(
+                root,
+                models=["fct_orders"],
+                target="development",
+                intent="build",
+                allow_broader_intent=True,
+            )
+
+        self.assertEqual(minimal["intent"], "static")
+        self.assertTrue(minimal["broader_intent_requires_override"])
+        self.assertEqual([step["command"].split()[1] for step in minimal["commands"]], ["parse", "ls"])
+        self.assertEqual(broader["intent"], "build")
+
+    def test_changed_singular_test_selects_the_test_and_reads_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            tests = root / "tests"
+            tests.mkdir()
+            (tests / "assert_orders_have_customers.sql").write_text(
+                "select * from {{ ref('fct_orders') }} where customer_id is null\n",
+                encoding="utf-8",
+            )
+            plan = planner.plan_validation(root, target="development", intent="build")
+
+        self.assertEqual(plan["recommended_intent"], "test")
+        self.assertEqual(plan["scope"]["singular_tests"], ["assert_orders_have_customers"])
+        self.assertIn("fct_orders", plan["scope"]["models"])
+        self.assertEqual(plan["scope"]["selectors"], ["assert_orders_have_customers"])
+        self.assertIn(
+            "--select assert_orders_have_customers",
+            plan["commands"][-1]["command"],
+        )
+        self.assertEqual(plan["commands"][-1]["command"].split()[1], "test")
+
+    def test_source_freshness_change_gets_a_source_specific_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            schema = root / "models" / "schema.yml"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace(
+                    "      - name: orders\n",
+                    "      - name: orders\n"
+                    "        config:\n"
+                    "          loaded_at_field: _loaded_at\n"
+                    "          freshness:\n"
+                    "            warn_after:\n"
+                    "              count: 12\n"
+                    "              period: hour\n",
+                ),
+                encoding="utf-8",
+            )
+            plan = planner.plan_validation(root, target="development", intent="build")
+
+        self.assertEqual(plan["recommended_intent"], "source_freshness")
+        self.assertEqual(plan["intent"], "source_freshness")
+        self.assertEqual(
+            plan["scope"]["source_resources"],
+            [{"source": "app", "table": "orders"}],
+        )
+        self.assertEqual(plan["scope"]["models"], ["stg_orders"])
+        self.assertIn(
+            "dbt source freshness",
+            plan["commands"][-1]["command"],
+        )
+        self.assertIn("source:app.orders", plan["commands"][-1]["command"])
+
+    def test_source_only_tests_are_scoped_without_rebuilding_consumers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            schema = root / "models" / "schema.yml"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace(
+                    "          - name: order_id\n",
+                    "          - name: order_id\n"
+                    "            data_tests:\n"
+                    "              - not_null\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            plan = planner.plan_validation(root, target="development", intent="build")
+
+        self.assertEqual(plan["recommended_intent"], "test")
+        self.assertEqual(plan["scope"]["selectors"], ["source:app.orders"])
+        self.assertIn("--select source:app.orders", plan["commands"][-1]["command"])
+        self.assertNotIn(" build ", f" {plan['commands'][-1]['command']} ")
+
+    def test_modern_dbt_unit_test_changes_select_the_tested_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.project(tmp)
+            unit_tests = root / "models" / "unit_tests.yml"
+            unit_tests.write_text(
+                "unit_tests:\n"
+                "  - name: fct_orders_without_rows\n"
+                "    model: fct_orders\n"
+                "    given: []\n"
+                "    expect:\n"
+                "      rows: []\n",
+                encoding="utf-8",
+            )
+            plan = planner.plan_validation(root, target="development", intent="build")
+
+        self.assertEqual(plan["recommended_intent"], "test")
+        self.assertEqual(plan["scope"]["models"], ["fct_orders"])
+        self.assertEqual(plan["scope"]["selectors"], ["fct_orders"])
+        self.assertEqual(plan["commands"][-1]["command"].split()[1], "test")
+
+    def test_macro_and_project_config_changes_require_explicit_model_scope(self) -> None:
+        for relative, content in (
+            ("macros/cents_to_dollars.sql", "{% macro cents_to_dollars(x) %} {{ x }} / 100 {% endmacro %}\n"),
+            ("dbt_project.yml", None),
+        ):
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as tmp:
+                root = self.project(tmp)
+                path = root / relative
+                if content is None:
+                    path.write_text(
+                        path.read_text(encoding="utf-8") + "\nmodels:\n  clean_project:\n    +materialized: view\n",
+                        encoding="utf-8",
+                    )
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content, encoding="utf-8")
+                plan = planner.plan_validation(root, target="development", intent="build")
+                scoped = planner.plan_validation(
+                    root,
+                    models=["fct_orders"],
+                    target="development",
+                    intent="build",
+                )
+
+                self.assertIn(relative, plan["scope"]["unresolved_dependency_changes"])
+                self.assertEqual(plan["recommended_intent"], "static")
+                self.assertIn("explicit affected model scope", plan["blocked_reason"])
+                self.assertEqual(plan["commands"][0]["command"].split()[1], "parse")
+                self.assertEqual(scoped["recommended_intent"], "build")
+                self.assertIsNone(scoped["blocked_reason"])
+                self.assertIn("--select fct_orders", scoped["commands"][-1]["command"])
+
     def test_yaml_contract_and_deleted_resources_expand_downstream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self.project(tmp)

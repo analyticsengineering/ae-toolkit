@@ -1,0 +1,5 @@
+name: legacy_unprefixed_finals
+version: 1.0.0
+config-version: 2
+profile: legacy_unprefixed_finals
+model-paths: ["models"]

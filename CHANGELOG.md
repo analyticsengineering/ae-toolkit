@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- Convention inference reads both legacy direct and modern dbt `config:` placement for source/table `loaded_at_field` and freshness properties.
+- Model-description coverage uses every project-owned SQL model as its denominator; listed YAML columns no longer imply complete output-column documentation.
+- Source load fields and freshness thresholds are reported by source/table as resource contracts rather than promoted to global house conventions.
+- Legacy projects with root-level final models such as `orders.sql` and `customers.sql` contribute positive evidence for unprefixed final naming.
+- The safety gate tokenizes shell commands, unwraps shell launchers, and blocks split/long-form recursive deletion plus destructive `git restore`, `checkout`, `clean`, `reset`, and `switch` forms without matching quoted examples printed by `echo`.
+- Validation planning scopes changed singular tests, source tests, source freshness, and source consumers; dependency-wide macro/package/project changes require explicit model scope.
+- Minimum validation intent now applies even when a caller names a model; broader validation requires the existing explicit override.
+- Saved-query-only projects are recognized as using dbt's Semantic Layer.
+
+### Changed
+
+- Correctness-critical unknown source mutation, delete, correction-timestamp, and lateness behavior may produce one focused question after local evidence is exhausted.
+- Column renames route explicitly: private atomic name-only changes use `rename-model`, while published interfaces requiring compatibility or phased cutover use `migration-plan`.
+
 ## [1.2.1] - 2026-08-31
 
 ### Fixed

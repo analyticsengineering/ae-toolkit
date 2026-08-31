@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ DB_CLIENT = re.compile(
 )
 DBT_EXECUTION = re.compile(
     r"\bdbt\b[^;&|]*?\b(?:run|build|test|snapshot|seed|run-operation|compile|show|debug)\b"
-    r"|\bdbt\b[^;&|]*?\bdocs\s+generate\b",
+    r"|\bdbt\b[^;&|]*?\b(?:docs\s+generate|source\s+freshness)\b",
     re.IGNORECASE,
 )
 DBT_DEPENDENCIES = re.compile(r"\bdbt\b[^;&|]*?\bdeps\b", re.IGNORECASE)
@@ -40,6 +41,120 @@ DB_DESTRUCTIVE = re.compile(
     r"\b(?:drop\s+(?:table|view|schema|database)|truncate\s+(?:table\s+)?)\b",
     re.IGNORECASE,
 )
+SHELL_WRAPPERS = {"bash", "dash", "sh", "zsh"}
+COMMAND_PREFIXES = {"command", "sudo"}
+
+
+def _segments(command: str) -> list[list[str]]:
+    """Tokenize executable shell segments without matching quoted prose."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        # Malformed quoting is not safe to reinterpret. Returning no segments
+        # leaves the hook's ordinary fail-closed input handling in charge.
+        return []
+    result: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and set(token) <= {";", "&", "|"}:
+            if current:
+                result.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        result.append(current)
+    return result
+
+
+def _command_tokens(tokens: list[str]) -> list[str]:
+    """Strip common non-semantic launch prefixes."""
+    index = 0
+    while index < len(tokens):
+        name = Path(tokens[index]).name
+        if name in COMMAND_PREFIXES:
+            index += 1
+            while index < len(tokens) and tokens[index].startswith("-"):
+                index += 1
+            continue
+        if name == "env":
+            index += 1
+            while index < len(tokens) and (
+                tokens[index].startswith("-") or "=" in tokens[index]
+            ):
+                index += 1
+            continue
+        if name in {"uv", "poetry"} and index + 1 < len(tokens) and tokens[index + 1] == "run":
+            index += 2
+            continue
+        break
+    return tokens[index:]
+
+
+def _short_flags(tokens: list[str]) -> set[str]:
+    flags: set[str] = set()
+    for token in tokens:
+        if token.startswith("--"):
+            continue
+        if token.startswith("-") and token != "-":
+            flags.update(token[1:])
+    return flags
+
+
+def _destructive_command(tokens: list[str]) -> str | None:
+    tokens = _command_tokens(tokens)
+    if not tokens:
+        return None
+    executable = Path(tokens[0]).name
+    arguments = tokens[1:]
+
+    if executable in SHELL_WRAPPERS and "-c" in arguments:
+        index = arguments.index("-c")
+        if index + 1 < len(arguments):
+            nested = classify(arguments[index + 1])
+            return nested.get("reason_code") if nested["permission"] == "deny" else None
+
+    if executable == "rm":
+        flags = _short_flags(arguments)
+        recursive = "r" in flags or "R" in flags or "--recursive" in arguments
+        force = "f" in flags or "--force" in arguments
+        if recursive and force:
+            return "destructive-filesystem"
+
+    if executable != "git":
+        return None
+
+    # Git global options can precede the subcommand. Finding the destructive
+    # verb is safer than assuming tokens[1] is always it (`git -C repo clean`).
+    subcommand_index = next(
+        (
+            index
+            for index, token in enumerate(arguments)
+            if token in {"reset", "clean", "restore", "checkout", "switch"}
+        ),
+        None,
+    )
+    if subcommand_index is None:
+        return None
+    subcommand = arguments[subcommand_index]
+    options = arguments[subcommand_index + 1 :]
+    flags = _short_flags(options)
+    if subcommand == "reset" and "--hard" in options:
+        return "destructive-git-reset"
+    if subcommand == "clean" and ("f" in flags or "--force" in options):
+        return "destructive-git-clean"
+    if subcommand == "restore":
+        staged_only = "--staged" in options and "--worktree" not in options
+        if not staged_only:
+            return "destructive-git-restore"
+    if subcommand == "checkout" and "--" in options:
+        return "destructive-git-checkout"
+    if subcommand == "switch" and "--discard-changes" in options:
+        return "destructive-git-switch"
+    return None
 
 
 def decision(
@@ -61,37 +176,70 @@ def decision(
 def classify(command: str) -> dict[str, str]:
     """Classify a shell command without executing it."""
     normalized = " ".join(command.split())
-    lower = normalized.lower()
-
-    if re.search(r"(?:^|[;&|]\s*)rm\s+(?:-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b", lower):
+    segments = _segments(command)
+    if command.strip() and not segments:
         return decision(
             "deny",
-            "Blocked destructive recursive deletion. Review and remove files through a scoped, reversible workflow.",
-            "The Analytics Engineering Toolkit safety gate blocks rm -rf style commands.",
-            "destructive-filesystem",
+            "Blocked a command the safety gate could not parse.",
+            "Fix malformed shell quoting before execution.",
+            "invalid-shell-syntax",
         )
+    for segment in segments:
+        tokens = _command_tokens(segment)
+        if not tokens or Path(tokens[0]).name not in SHELL_WRAPPERS:
+            continue
+        arguments = tokens[1:]
+        if "-c" not in arguments:
+            continue
+        index = arguments.index("-c")
+        if index + 1 >= len(arguments):
+            continue
+        nested = classify(arguments[index + 1])
+        if nested["permission"] != "allow":
+            return nested
+    for tokens in segments:
+        destructive = _destructive_command(tokens)
+        if destructive == "destructive-filesystem":
+            return decision(
+                "deny",
+                "Blocked destructive recursive deletion. Review and remove files through a scoped, reversible workflow.",
+                "The Analytics Engineering Toolkit safety gate blocks recursive forced deletion.",
+                destructive,
+            )
+        if destructive:
+            return decision(
+                "deny",
+                "Blocked a destructive Git worktree command because it can discard local work.",
+                "Use a non-destructive Git workflow and ask the user before discarding changes.",
+                destructive,
+            )
 
-    if re.search(r"\bgit\s+reset\s+--hard\b", lower):
-        return decision(
-            "deny",
-            "Blocked git reset --hard because it can discard uncommitted work.",
-            "Use a non-destructive Git workflow and ask the user before discarding changes.",
-            "destructive-git-reset",
+    executable_segments = [
+        tokens
+        for tokens in (_command_tokens(segment) for segment in segments)
+        if tokens
+    ]
+    dbt_segments = [
+        shlex.join(tokens)
+        for tokens in executable_segments
+        if Path(tokens[0]).name == "dbt"
+    ]
+    database_segments = [
+        shlex.join(tokens)
+        for tokens in executable_segments
+        if DB_CLIENT.fullmatch(Path(tokens[0]).name)
+    ]
+    direct_sql = bool(
+        re.match(
+            r"^\s*(?:select|explain|insert|update|delete|merge|alter|drop|truncate)\b",
+            normalized,
+            re.IGNORECASE,
         )
-
-    if re.search(r"\bgit\s+clean\b[^;&|]*(?:\s|^)-[a-z]*f", lower):
-        return decision(
-            "deny",
-            "Blocked git clean with force because it can permanently remove untracked files.",
-            "Inspect untracked files and use a scoped, user-approved cleanup.",
-            "destructive-git-clean",
-        )
-
-    database_context = bool(DB_CLIENT.search(normalized)) or bool(
-        re.match(r"^\s*(?:select|explain|insert|update|delete|merge|alter|drop|truncate)\b", normalized, re.IGNORECASE)
     )
+    governed = " ; ".join([*dbt_segments, *database_segments])
+    database_context = bool(database_segments) or direct_sql
 
-    if database_context and DB_DESTRUCTIVE.search(normalized):
+    if database_context and DB_DESTRUCTIVE.search(governed or normalized):
         return decision(
             "deny",
             "Blocked destructive database DDL. V1 does not execute DROP or TRUNCATE statements.",
@@ -99,7 +247,7 @@ def classify(command: str) -> dict[str, str]:
             "destructive-database-ddl",
         )
 
-    if database_context and DB_WRITE.search(normalized):
+    if database_context and DB_WRITE.search(governed or normalized):
         return decision(
             "deny",
             "Blocked database mutation. V1 does not execute INSERT, UPDATE, DELETE, MERGE, or ALTER statements.",
@@ -107,7 +255,7 @@ def classify(command: str) -> dict[str, str]:
             "database-mutation",
         )
 
-    if DBT_FULL_REFRESH.search(normalized):
+    if any(DBT_FULL_REFRESH.search(segment) for segment in dbt_segments):
         return decision(
             "deny",
             "Blocked dbt --full-refresh because it can replace an unbounded set of warehouse objects.",
@@ -115,7 +263,7 @@ def classify(command: str) -> dict[str, str]:
             "dbt-full-refresh",
         )
 
-    if DBT_DEPENDENCIES.search(normalized):
+    if any(DBT_DEPENDENCIES.search(segment) for segment in dbt_segments):
         return decision(
             "ask",
             "This command installs or updates dbt packages in the workspace.",
@@ -123,7 +271,7 @@ def classify(command: str) -> dict[str, str]:
             "dbt-dependency-install",
         )
 
-    if DBT_EXECUTION.search(normalized):
+    if any(DBT_EXECUTION.search(segment) for segment in dbt_segments):
         return decision(
             "ask",
             "This dbt command may connect to or change a warehouse. Confirm the exact scope and a named local or development target.",
@@ -131,7 +279,7 @@ def classify(command: str) -> dict[str, str]:
             "dbt-execution",
         )
 
-    if database_context and DB_READ.search(normalized):
+    if database_context and DB_READ.search(governed or normalized):
         return decision(
             "ask",
             "This command may query a database. Confirm it targets an approved local or development connection.",

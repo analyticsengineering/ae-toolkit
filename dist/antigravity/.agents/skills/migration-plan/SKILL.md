@@ -1,6 +1,6 @@
 ---
 name: migration-plan
-description: Plans analytical migrations and intentional contract changes with compatibility, phased cutover, validation, ownership, and rollback. Use when changing a model's grain, row population, columns, types, meanings, keys, metric semantics, materialization, or consumer interface; use refactor-model for contract-preserving rewrites and rename-model for coordinated name-only changes.
+description: Plans analytical migrations and intentional contract changes with compatibility, phased cutover, validation, ownership, and rollback. Use when changing grain, rows, columns, types, meanings, keys, metric semantics, materialization, or a published consumer interface—including a column rename that cannot move atomically; use refactor-model for contract-preserving rewrites and rename-model for coordinated internal name-only changes.
 ---
 
 # Migration Plan

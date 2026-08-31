@@ -4,7 +4,7 @@
 
 Install the toolkit, open a data project, and work normally. Ask for a model, source, test, metric, refactor, investigation, or review in plain language. The toolkit gives Cursor, VS Code, and Google Antigravity repository-aware analytics-engineering workflows, deterministic inspection, validation planning, and safety guardrails.
 
-The local toolkit is genuinely useful without an AnalyticsEngineering.com account or remote service. It reads the repository before asking questions, learns the team's naming, testing, documentation, SQL, warehouse, semantic-layer, and BI conventions, then applies them. It asks only about what files cannot establish: intended grain, business meaning, promised freshness, or acceptance of a breaking change.
+The local toolkit is genuinely useful without an AnalyticsEngineering.com account or remote service. It reads the repository before asking questions, learns the team's naming, testing, documentation, SQL, warehouse, semantic-layer, and BI conventions, then applies them. It asks only about correctness-critical facts files cannot establish, such as intended grain, business meaning, source mutation/delete behavior, lateness guarantees, promised freshness, or acceptance of a breaking change.
 
 ## Product boundary
 
@@ -260,8 +260,8 @@ Python 3 is required for deterministic inspectors, hook execution, and tests. Th
 - `python3 scripts/inspect_repo.py [path] [--pretty]` detects analytics-engineering technologies and repository structure.
 - `python3 scripts/inspect_git.py [path] [--base BRANCH] [--pretty]` reports branch, status, and diffs using read-only Git commands.
 - `python3 scripts/inspect_dbt.py [path] [--pretty]` statically inspects a dbt project without executing dbt.
-- `python3 scripts/infer_conventions.py [path] [--json] [--write] [--force]` derives the project's naming, key, test, documentation, and SQL conventions, each with the count of models supporting and contradicting it. `--write` creates `.ae/project.yml` and refuses to replace an existing profile without `--force`.
-- `python3 scripts/plan_dbt_validation.py [path] [--model NAME] [--target TARGET] [--intent static|compile|test|run|build] [--allow-broader-intent] [--pretty]` plans a bounded dbt selector and command sequence without executing it. It recommends validation from the changed resource type and omits unnecessarily broad metadata/test-only warehouse commands unless deliberately overridden.
+- `python3 scripts/infer_conventions.py [path] [--json] [--write] [--force]` derives house naming, key, test, documentation, and SQL conventions with supporting/contradicting counts, while reporting loaded-at fields and freshness SLAs separately by source/table. `--write` creates `.ae/project.yml` and refuses to replace an existing profile without `--force`.
+- `python3 scripts/plan_dbt_validation.py [path] [--model NAME] [--target TARGET] [--intent static|compile|test|run|build|source_freshness] [--allow-broader-intent] [--pretty]` plans a bounded dbt selector and command sequence without executing it. It understands model SQL/YAML, singular tests, source tests/freshness, semantic resources, and dependency-wide macro/project changes; it omits unnecessarily broad commands unless deliberately overridden.
 - `python3 scripts/interpret_dbt_results.py [--run-results PATH] [--log PATH] [--pretty]` classifies current dbt failures from local artifacts and redacts secret-shaped values.
 - `python3 scripts/profile_dataset.py PATH [--format csv|json|jsonl|ndjson] [--encoding NAME] [--delimiter CHAR] [--pretty]` deterministically profiles a local dataset.
 - `python3 scripts/redact_secrets.py ...` performs best-effort detection/redaction before optional cloud transmission.

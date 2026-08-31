@@ -1,18 +1,28 @@
 {
   "shell": [
     {"command": "rm -rf build/", "permission": "deny", "reason_code": "destructive-filesystem"},
+    {"command": "rm -r -f build/", "permission": "deny", "reason_code": "destructive-filesystem"},
+    {"command": "rm --recursive --force build/", "permission": "deny", "reason_code": "destructive-filesystem"},
+    {"command": "bash -c 'rm -rf build/'", "permission": "deny", "reason_code": "destructive-filesystem"},
     {"command": "git reset --hard HEAD~1", "permission": "deny", "reason_code": "destructive-git-reset"},
+    {"command": "git restore .", "permission": "deny", "reason_code": "destructive-git-restore"},
+    {"command": "git checkout -- .", "permission": "deny", "reason_code": "destructive-git-checkout"},
+    {"command": "git clean --force -d", "permission": "deny", "reason_code": "destructive-git-clean"},
     {"command": "psql -c 'DROP TABLE customers'", "permission": "deny", "reason_code": "destructive-database-ddl"},
     {"command": "dbt build --target dev", "permission": "ask", "reason_code": "dbt-execution"},
     {"command": "dbt compile --select fct_orders --target dev", "permission": "ask", "reason_code": "dbt-execution"},
     {"command": "dbt show --select fct_orders --target dev", "permission": "ask", "reason_code": "dbt-execution"},
     {"command": "dbt docs generate --target dev", "permission": "ask", "reason_code": "dbt-execution"},
+    {"command": "dbt source freshness --select source:app.orders --target dev", "permission": "ask", "reason_code": "dbt-execution"},
+    {"command": "bash -c 'dbt build --select fct_orders --target dev'", "permission": "ask", "reason_code": "dbt-execution"},
     {"command": "dbt deps", "permission": "ask", "reason_code": "dbt-dependency-install"},
     {"command": "dbt build --select fct_orders --target dev --full-refresh", "permission": "deny", "reason_code": "dbt-full-refresh"},
     {"command": "dbt parse --project-dir .", "permission": "allow", "reason_code": "no-risk-pattern"},
     {"command": "dbt ls --select fct_orders", "permission": "allow", "reason_code": "no-risk-pattern"},
     {"command": "python3 scripts/profile_dataset.py sample.csv", "permission": "allow", "reason_code": "no-risk-pattern"},
-    {"command": "git diff --check", "permission": "allow", "reason_code": "no-risk-pattern"}
+    {"command": "git diff --check", "permission": "allow", "reason_code": "no-risk-pattern"},
+    {"command": "echo 'rm -rf build/ and dbt build'", "permission": "allow", "reason_code": "no-risk-pattern"},
+    {"command": "git restore --staged models/schema.yml", "permission": "allow", "reason_code": "no-risk-pattern"}
   ],
   "cloud": {
     "mcp_server_name": "analytics-engineering",

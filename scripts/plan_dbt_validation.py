@@ -26,7 +26,7 @@ PRODUCTION_TARGET = re.compile(
     r"(?:^|[-_])(?:prod|production|prd|main)(?:$|[-_])",
     re.IGNORECASE,
 )
-WAREHOUSE_INTENTS = {"compile", "test", "run", "build"}
+WAREHOUSE_INTENTS = {"compile", "test", "run", "build", "source_freshness"}
 
 
 class ValidationPlanError(ValueError):
@@ -50,7 +50,7 @@ def _yaml_models(path: Path) -> list[str]:
         document = infer_conventions.parse_yaml(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
         return []
-    return _document_models(document)
+    return sorted(set([*_document_models(document), *_unit_test_models(document)]))
 
 
 def _document_models(document: Any) -> list[str]:
@@ -66,6 +66,80 @@ def _document_models(document: Any) -> list[str]:
     )
 
 
+def _unit_test_models(document: Any) -> list[str]:
+    unit_tests = document.get("unit_tests") if isinstance(document, dict) else None
+    if not isinstance(unit_tests, list):
+        return []
+    return sorted(
+        {
+            str(test["model"])
+            for test in unit_tests
+            if isinstance(test, dict) and test.get("model")
+        }
+    )
+
+
+def _document_sources(document: Any) -> list[dict[str, str]]:
+    sources = document.get("sources") if isinstance(document, dict) else None
+    if not isinstance(sources, list):
+        return []
+    resources: list[dict[str, str]] = []
+    for source in sources:
+        if not isinstance(source, dict) or not source.get("name"):
+            continue
+        source_name = str(source["name"])
+        tables = source.get("tables") if isinstance(source.get("tables"), list) else []
+        for table in tables:
+            if isinstance(table, dict) and table.get("name"):
+                resources.append({"source": source_name, "table": str(table["name"])})
+    return sorted(resources, key=lambda item: (item["source"], item["table"]))
+
+
+def _changed_source_resources(
+    before: dict[str, Any],
+    current: dict[str, Any],
+) -> list[dict[str, str]]:
+    def source_map(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        sources = document.get("sources")
+        if not isinstance(sources, list):
+            return {}
+        return {
+            str(source["name"]): source
+            for source in sources
+            if isinstance(source, dict) and source.get("name")
+        }
+
+    changed: set[tuple[str, str]] = set()
+    old_sources, new_sources = source_map(before), source_map(current)
+    for source_name in sorted(set(old_sources) | set(new_sources)):
+        old_source = old_sources.get(source_name, {})
+        new_source = new_sources.get(source_name, {})
+
+        def tables(source: dict[str, Any]) -> dict[str, dict[str, Any]]:
+            entries = source.get("tables")
+            if not isinstance(entries, list):
+                return {}
+            return {
+                str(table["name"]): table
+                for table in entries
+                if isinstance(table, dict) and table.get("name")
+            }
+
+        old_tables, new_tables = tables(old_source), tables(new_source)
+        old_header = {key: value for key, value in old_source.items() if key != "tables"}
+        new_header = {key: value for key, value in new_source.items() if key != "tables"}
+        if old_header != new_header:
+            changed.update((source_name, table) for table in set(old_tables) | set(new_tables))
+            continue
+        for table_name in set(old_tables) | set(new_tables):
+            if old_tables.get(table_name) != new_tables.get(table_name):
+                changed.add((source_name, table_name))
+    return [
+        {"source": source, "table": table}
+        for source, table in sorted(changed)
+    ]
+
+
 def _without_keys(value: Any, keys: set[str]) -> Any:
     if isinstance(value, dict):
         return {
@@ -75,6 +149,20 @@ def _without_keys(value: Any, keys: set[str]) -> Any:
         }
     if isinstance(value, list):
         return [_without_keys(item, keys) for item in value]
+    return value
+
+
+def _without_keys_pruned(value: Any, keys: set[str]) -> Any:
+    """Remove nested keys and containers made empty by that removal."""
+    if isinstance(value, dict):
+        result = {
+            key: _without_keys_pruned(item, keys)
+            for key, item in value.items()
+            if key not in keys
+        }
+        return {key: item for key, item in result.items() if item not in ({}, [])}
+    if isinstance(value, list):
+        return [_without_keys_pruned(item, keys) for item in value]
     return value
 
 
@@ -108,6 +196,23 @@ def _contains_test_declaration(value: Any) -> bool:
     return False
 
 
+def _source_change_kind(before: dict[str, Any], current: dict[str, Any]) -> str:
+    """Classify source YAML without treating resource SLAs as model contracts."""
+    if before == current:
+        return "formatting_or_comments_only"
+    if _without_keys(before, {"description"}) == _without_keys(current, {"description"}):
+        return "description_only"
+    if _without_keys(before, {"description", "tests", "data_tests"}) == _without_keys(
+        current, {"description", "tests", "data_tests"}
+    ):
+        return "test_only"
+    if _without_keys_pruned(before, {"loaded_at_field", "freshness"}) == _without_keys_pruned(
+        current, {"loaded_at_field", "freshness"}
+    ):
+        return "source_freshness"
+    return "source_contract"
+
+
 def _semantic_resources(document: dict[str, Any]) -> list[dict[str, str]]:
     resources: list[dict[str, str]] = []
     for key, resource_type in (
@@ -129,7 +234,7 @@ def _semantic_resources(document: dict[str, Any]) -> list[dict[str, str]]:
 def _yaml_change(
     root: Path,
     change: dict[str, Any],
-) -> tuple[str, list[str], list[dict[str, str]]]:
+) -> tuple[str, list[str], list[dict[str, str]], list[dict[str, str]]]:
     relative = str(change.get("path") or "")
     path = root / relative
     status = str(change.get("status") or "")
@@ -138,34 +243,68 @@ def _yaml_change(
         previous_path = str(change.get("original_path") or relative)
         previous = inspect_git._git(root, ["show", f"HEAD:{previous_path}"], check=False)
         if previous.returncode:
-            return "rename_or_delete", [], []
+            return "rename_or_delete", [], [], []
         before = _parse_yaml_text(previous.stdout)
-        return "rename_or_delete", _document_models(before), _semantic_resources(before)
+        return (
+            "rename_or_delete",
+            _document_models(before),
+            _semantic_resources(before),
+            _document_sources(before),
+        )
 
     current_text = path.read_text(encoding="utf-8", errors="replace")
     current = _parse_yaml_text(current_text)
     models = _yaml_models(path)
     semantic = _semantic_resources(current)
+    sources = _document_sources(current)
 
     previous = inspect_git._git(root, ["show", f"HEAD:{relative}"], check=False)
     if previous.returncode:
         if semantic:
-            return "semantic_or_metric", models, semantic
+            return "semantic_or_metric", models, semantic, sources
+        if sources:
+            return _source_change_kind({}, current), models, [], sources
+        if _unit_test_models(current):
+            return "test_only", models, [], []
         if _metadata_only_document(current):
             kind = "test_only" if _contains_test_declaration(current) else "description_only"
-            return kind, models, []
-        return "contract", models, []
+            return kind, models, [], []
+        return "contract", models, [], []
 
     before = _parse_yaml_text(previous.stdout)
+    before_sources = _document_sources(before)
+    source_resources = _changed_source_resources(before, current)
+    sources_changed = before.get("sources") != current.get("sources")
+    if not sources_changed:
+        source_resources = []
     if before == current:
-        return "formatting_or_comments_only", models, []
+        return "formatting_or_comments_only", models, [], source_resources
+    if sources_changed:
+        # A mixed model/source document still gets the more conservative source
+        # classification when the source block changed.
+        changed_models = models if before.get("models") != current.get("models") else []
+        return (
+            _source_change_kind(before, current),
+            changed_models,
+            semantic,
+            source_resources,
+        )
+    if before.get("unit_tests") != current.get("unit_tests") and _without_keys(
+        before, {"unit_tests"}
+    ) == _without_keys(current, {"unit_tests"}):
+        return (
+            "test_only",
+            sorted(set([*_unit_test_models(before), *_unit_test_models(current)])),
+            semantic,
+            source_resources,
+        )
     if _without_keys(before, {"description"}) == _without_keys(current, {"description"}):
-        return "description_only", models, []
+        return "description_only", models, [], source_resources
     if _without_keys(before, {"description", "tests", "data_tests"}) == _without_keys(
         current,
         {"description", "tests", "data_tests"},
     ):
-        return "test_only", models, []
+        return "test_only", models, [], source_resources
     if any(
         before.get(key) != current.get(key)
         for key in ("semantic_models", "metrics", "saved_queries")
@@ -181,18 +320,61 @@ def _yaml_change(
                 semantic_by_identity.values(),
                 key=lambda item: (item["resource_type"], item["name"]),
             ),
+            source_resources,
         )
-    return "contract", models, []
+    return "contract", models, [], source_resources
+
+
+def _sql_dependencies(text: str) -> tuple[set[str], set[tuple[str, str]]]:
+    models = {
+        match.group(1)
+        for match in re.finditer(r"\bref\s*\(\s*['\"]([^'\"]+)['\"]", text, re.I)
+    }
+    sources = {
+        (match.group(1), match.group(2))
+        for match in re.finditer(
+            r"\bsource\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]",
+            text,
+            re.I,
+        )
+    }
+    return models, sources
+
+
+def _source_consumers(root: Path, resources: Sequence[dict[str, str]]) -> set[str]:
+    identities = {(item["source"], item["table"]) for item in resources}
+    consumers: set[str] = set()
+    if not identities:
+        return consumers
+    for path in inspect_dbt._walk_files(root):
+        relative = path.relative_to(root)
+        if path.suffix.lower() != ".sql" or "models" not in relative.parts:
+            continue
+        _, used_sources = _sql_dependencies(inspect_dbt._read_text(path))
+        if used_sources & identities:
+            consumers.add(path.stem)
+    return consumers
 
 
 def _models_from_changes(
     root: Path,
     changes: Iterable[dict[str, Any]],
-) -> tuple[list[str], set[str], list[dict[str, str]], dict[str, str]]:
+) -> tuple[
+    list[str],
+    set[str],
+    list[dict[str, str]],
+    dict[str, str],
+    list[dict[str, str]],
+    list[str],
+    list[str],
+]:
     models: set[str] = set()
     downstream_models: set[str] = set()
     semantic_resources: list[dict[str, str]] = []
     yaml_change_kinds: dict[str, str] = {}
+    source_resources: list[dict[str, str]] = []
+    singular_tests: list[str] = []
+    unresolved_dependency_changes: list[str] = []
     for change in changes:
         relative = str(change.get("path") or "")
         path = root / relative
@@ -203,18 +385,48 @@ def _models_from_changes(
             models.add(path.stem)
             if renamed_or_deleted:
                 downstream_models.add(path.stem)
+        elif suffix == ".sql" and "tests" in Path(relative).parts:
+            singular_tests.append(path.stem)
+            if path.is_file():
+                referenced_models, referenced_sources = _sql_dependencies(
+                    path.read_text(encoding="utf-8", errors="replace")
+                )
+                models.update(referenced_models)
+                source_resources.extend(
+                    {"source": source, "table": table}
+                    for source, table in referenced_sources
+                )
+        elif suffix == ".sql" and "macros" in Path(relative).parts:
+            unresolved_dependency_changes.append(relative)
+        elif Path(relative).name in {
+            "dbt_project.yml",
+            "dbt_project.yaml",
+            "packages.yml",
+            "dependencies.yml",
+        }:
+            unresolved_dependency_changes.append(relative)
         elif suffix in {".yml", ".yaml"}:
-            kind, yaml_models, semantic = _yaml_change(root, change)
+            kind, yaml_models, semantic, sources = _yaml_change(root, change)
             yaml_change_kinds[relative] = kind
             models.update(yaml_models)
             semantic_resources.extend(semantic)
+            source_resources.extend(sources)
+            models.update(_source_consumers(root, sources))
             if kind in {"contract", "rename_or_delete"}:
                 downstream_models.update(yaml_models)
+            if kind in {"source_contract", "rename_or_delete"}:
+                downstream_models.update(_source_consumers(root, sources))
+    source_by_identity = {
+        (item["source"], item["table"]): item for item in source_resources
+    }
     return (
         sorted(models),
         downstream_models,
         sorted(semantic_resources, key=lambda item: (item["resource_type"], item["name"])),
         yaml_change_kinds,
+        sorted(source_by_identity.values(), key=lambda item: (item["source"], item["table"])),
+        sorted(set(singular_tests)),
+        sorted(set(unresolved_dependency_changes)),
     )
 
 
@@ -230,9 +442,17 @@ def _recommend_intent(
     downstream_models: set[str],
     semantic_resources: Sequence[dict[str, str]],
     yaml_change_kinds: dict[str, str],
+    singular_tests: Sequence[str],
+    source_resources: Sequence[dict[str, str]],
+    unresolved_dependency_changes: Sequence[str],
 ) -> tuple[str, str]:
-    if explicit_models:
+    if not changes and explicit_models:
         return requested_intent, "The user supplied both model scope and validation intent."
+    if explicit_models and (semantic_resources or unresolved_dependency_changes):
+        return (
+            requested_intent,
+            "The user supplied affected model scope for a dependency-wide change.",
+        )
 
     changed_model_sql = any(
         Path(str(change.get("path") or "")).suffix.lower() == ".sql"
@@ -241,11 +461,38 @@ def _recommend_intent(
     )
     if changed_model_sql or downstream_models:
         return "build", "Model SQL, contract, rename, or deletion changes require model and test validation."
+    if singular_tests:
+        return "test", "Only singular tests changed, so run those tests without rebuilding models."
+    kinds = set(yaml_change_kinds.values())
+    if "source_freshness" in kinds:
+        return (
+            "source_freshness",
+            "Only source freshness or loaded-at configuration changed, so validate those sources.",
+        )
+    if source_resources and "test_only" in kinds:
+        return "test", "Only source test declarations changed, so rebuilding models is unnecessary."
     if semantic_resources:
         return "static", "Semantic resources must be resolved to affected models before warehouse validation."
-    if "test_only" in set(yaml_change_kinds.values()):
+    if unresolved_dependency_changes:
+        return (
+            "static",
+            "Macro, package, or project configuration changes need explicit affected model scope before warehouse validation.",
+        )
+    if "test_only" in kinds:
         return "test", "Only test declarations changed, so rebuilding models is unnecessary."
     return "static", "Only comments, formatting, descriptions, or other non-executable metadata changed."
+
+
+def _intent_is_broader(requested: str, recommended: str) -> bool:
+    if requested == recommended:
+        return False
+    if recommended == "static":
+        return requested in WAREHOUSE_INTENTS
+    if recommended == "test":
+        return requested in {"run", "build"}
+    if recommended == "source_freshness":
+        return requested in {"compile", "test", "run", "build"}
+    return False
 
 
 def plan_validation(
@@ -274,31 +521,59 @@ def plan_validation(
         changes = []
         git_error = str(exc)
 
-    inferred_models, downstream_models, semantic_resources, yaml_change_kinds = _models_from_changes(
-        root,
-        changes,
-    )
+    (
+        inferred_models,
+        downstream_models,
+        semantic_resources,
+        yaml_change_kinds,
+        source_resources,
+        singular_tests,
+        unresolved_dependency_changes,
+    ) = _models_from_changes(root, changes)
     selected = sorted({item.strip() for item in (models or inferred_models) if item.strip()})
     source = "explicit" if models else "git_diff"
     model_selectors = [f"{name}+" if name in downstream_models else name for name in selected]
     scoped_semantic = [] if models else semantic_resources
+    scoped_sources = source_resources
+    scoped_singular_tests = [] if models else singular_tests
+    scoped_unresolved = [] if models else unresolved_dependency_changes
     semantic_selectors = [f"{item['name']}+" for item in scoped_semantic]
-    resolution_selectors = sorted(set([*model_selectors, *semantic_selectors]))
-    selectors = model_selectors or semantic_selectors
-    contract_change = any(name in downstream_models for name in selected) or bool(scoped_semantic)
+    source_selectors = [
+        f"source:{item['source']}.{item['table']}" for item in scoped_sources
+    ]
+    singular_test_selectors = list(scoped_singular_tests)
+    resolution_selectors = sorted(
+        set(
+            [
+                *model_selectors,
+                *semantic_selectors,
+                *source_selectors,
+                *singular_test_selectors,
+            ]
+        )
+    )
+    contract_change = any(name in downstream_models for name in selected) or bool(semantic_resources)
     recommended_intent, recommendation_reason = _recommend_intent(
         intent,
         explicit_models=bool(models),
         changes=changes,
         downstream_models=downstream_models,
-        semantic_resources=scoped_semantic,
+        semantic_resources=semantic_resources,
         yaml_change_kinds=yaml_change_kinds,
+        singular_tests=scoped_singular_tests,
+        source_resources=scoped_sources,
+        unresolved_dependency_changes=unresolved_dependency_changes,
     )
-    over_validation = (
-        recommended_intent in {"static", "test"}
-        and intent in WAREHOUSE_INTENTS
-        and intent != recommended_intent
+    selectors = (
+        singular_test_selectors
+        if recommended_intent == "test" and singular_test_selectors
+        else source_selectors
+        if recommended_intent in {"static", "test", "source_freshness"} and source_selectors
+        else model_selectors
+        or semantic_selectors
+        or source_selectors
     )
+    over_validation = _intent_is_broader(intent, recommended_intent)
     effective_intent = intent if allow_broader_intent or not over_validation else recommended_intent
 
     commands: list[dict[str, Any]] = [
@@ -331,18 +606,56 @@ def plan_validation(
         )
 
     blocked_reason: str | None = None
-    if scoped_semantic and not selected and intent in WAREHOUSE_INTENTS:
+    if scoped_unresolved and not models and intent in WAREHOUSE_INTENTS:
+        blocked_reason = (
+            "Macro, package, or project configuration changes require an explicit "
+            "affected model scope before warehouse validation."
+        )
+    elif scoped_semantic and not selected and intent in WAREHOUSE_INTENTS:
         blocked_reason = (
             "Semantic or metric changes require an explicit affected model scope "
             "before warehouse validation."
         )
-    elif not selected and not semantic_resources and effective_intent != "static":
+    elif (
+        not selected
+        and not scoped_semantic
+        and not scoped_sources
+        and not scoped_singular_tests
+        and effective_intent != "static"
+    ):
         blocked_reason = "No changed or explicitly named dbt models established a bounded scope."
     elif effective_intent in WAREHOUSE_INTENTS and not target:
         blocked_reason = "A local or development target must be named explicitly before warehouse validation."
     elif target and PRODUCTION_TARGET.search(target):
         blocked_reason = f"Target {target!r} appears production-like and is not eligible for automated validation."
+    elif effective_intent == "source_freshness":
+        commands.append(
+            {
+                "step": len(commands) + 1,
+                "command": _command(
+                    "dbt",
+                    "source",
+                    "freshness",
+                    "--project-dir",
+                    str(root),
+                    "--select",
+                    *source_selectors,
+                    "--target",
+                    str(target),
+                ),
+                "executes_warehouse": True,
+                "requires_approval": True,
+                "purpose": "Validate freshness for only the changed source tables.",
+            }
+        )
     elif effective_intent in WAREHOUSE_INTENTS:
+        warehouse_selectors = (
+            singular_test_selectors
+            if effective_intent == "test" and singular_test_selectors
+            else source_selectors
+            if effective_intent == "test" and source_selectors
+            else model_selectors
+        )
         commands.append(
             {
                 "step": len(commands) + 1,
@@ -352,7 +665,7 @@ def plan_validation(
                     "--project-dir",
                     str(root),
                     "--select",
-                    *model_selectors,
+                    *warehouse_selectors,
                     "--target",
                     str(target),
                 ),
@@ -381,6 +694,9 @@ def plan_validation(
             "contract_change": contract_change,
             "yaml_change_kinds": yaml_change_kinds,
             "semantic_resources": scoped_semantic,
+            "source_resources": scoped_sources,
+            "singular_tests": scoped_singular_tests,
+            "unresolved_dependency_changes": scoped_unresolved,
             "changed_paths": [str(item.get("path")) for item in changes],
         },
         "target": {
@@ -406,7 +722,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--target", help="Explicit local or development dbt target")
     parser.add_argument(
         "--intent",
-        choices=["static", "compile", "test", "run", "build"],
+        choices=["static", "compile", "test", "run", "build", "source_freshness"],
         default="build",
     )
     parser.add_argument(

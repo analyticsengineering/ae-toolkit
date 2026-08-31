@@ -5,6 +5,8 @@ sources:
     tables:
       - name: orders
         description: One row per order.
+        columns:
+          - name: order_id
 models:
   - name: stg_orders
     description: Cleaned orders.

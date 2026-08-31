@@ -1,0 +1,5 @@
+name: modern_source_config
+version: 1.0.0
+config-version: 2
+profile: modern_source_config
+model-paths: ["models"]

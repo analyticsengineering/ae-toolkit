@@ -400,7 +400,9 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
         "models": sql_details,
         "semantic_layer": {
             "detected": any(
-                detail["contains_semantic_models"] or detail["contains_metrics"]
+                detail["contains_semantic_models"]
+                or detail["contains_metrics"]
+                or detail["contains_saved_queries"]
                 for detail in yaml_details
             ),
             "semantic_model_file_count": sum(

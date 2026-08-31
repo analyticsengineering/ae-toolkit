@@ -215,8 +215,15 @@ class ConventionInferenceTests(unittest.TestCase):
         self.assertTrue(conventions["sql"]["leading_commas"])
         self.assertTrue(conventions["sql"]["lowercase_keywords"])
         self.assertEqual(conventions["sql"]["indent_width"], 4)
-        self.assertEqual(conventions["sources"]["loaded_at_field"], "_loaded_at")
-        self.assertEqual(conventions["sources"]["freshness_warn_after"], "12 hour")
+        source_contracts = report["resource_patterns"]["sources"]
+        self.assertTrue(
+            all(item["loaded_at_field"] == "_loaded_at" for item in source_contracts)
+        )
+        self.assertTrue(
+            all(item["freshness"]["warn_after"] == "12 hour" for item in source_contracts)
+        )
+        self.assertNotIn("loaded_at_field", conventions["sources"])
+        self.assertNotIn("freshness_warn_after", conventions["sources"])
         self.assertFalse(conventions["sources"]["identifier_required"])
         self.assertEqual(conventions["sources"]["filename_pattern"], "sources.yml")
         self.assertEqual(report["open_questions"], [])
@@ -402,6 +409,74 @@ class ConventionInferenceTests(unittest.TestCase):
         )["sources"]
         self.assertEqual(sources[0]["freshness"]["warn_after"]["count"], 12)
         self.assertEqual(len(sources[0]["tables"]), 5)
+
+    def test_modern_source_config_is_normalized_per_table_not_globalized(self) -> None:
+        report = self.infer("modern_source_config")
+        contracts = {
+            (item["source"], item["table"]): item
+            for item in report["resource_patterns"]["sources"]
+        }
+
+        self.assertEqual(
+            contracts[("jaffle_shop", "raw_orders")]["loaded_at_field"],
+            "ordered_at",
+        )
+        self.assertEqual(
+            contracts[("jaffle_shop", "raw_orders")]["freshness"]["warn_after"],
+            "12 hour",
+        )
+        self.assertEqual(
+            contracts[("jaffle_shop", "raw_stores")]["loaded_at_field"],
+            "opened_at",
+        )
+        self.assertEqual(
+            contracts[("jaffle_shop", "raw_stores")]["freshness"]["warn_after"],
+            "24 hour",
+        )
+        self.assertEqual(
+            contracts[("jaffle_shop", "raw_customers")]["loaded_at_field"],
+            "_ingested_at",
+        )
+        self.assertNotIn("loaded_at_field", report["conventions"]["sources"])
+        self.assertEqual(
+            report["evidence"]["sources.loaded_at_field"]["candidates"],
+            {"_ingested_at": 1, "opened_at": 1, "ordered_at": 1},
+        )
+
+    def test_documentation_coverage_uses_every_project_model_as_denominator(self) -> None:
+        report = self.infer("sparse_documentation")
+        evidence = report["evidence"]["documentation.model_descriptions_required"]
+
+        self.assertEqual(evidence["total"], 6)
+        self.assertEqual(evidence["candidates"], {"false": 4, "true": 2})
+        self.assertFalse(report["conventions"]["documentation"]["model_descriptions_required"])
+        self.assertNotIn(
+            "column_descriptions_required",
+            report["conventions"]["documentation"],
+            "listed YAML columns do not establish coverage of model output columns",
+        )
+
+    def test_unprefixed_root_marts_are_positive_naming_evidence(self) -> None:
+        report = self.infer("legacy_unprefixed_finals")
+
+        self.assertEqual(report["conventions"]["models"]["final_naming"], "unprefixed")
+        self.assertEqual(report["conventions"]["models"]["final_directory"], "models")
+        self.assertEqual(report["evidence"]["models.final_naming"]["total"], 2)
+
+    def test_saved_queries_alone_still_identify_the_semantic_layer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            shutil.copytree(self.fixture("clean_project"), project)
+            (project / "models" / "saved_queries.yml").write_text(
+                "saved_queries:\n  - name: weekly_orders\n",
+                encoding="utf-8",
+            )
+            report = infer_conventions.infer_conventions(project)
+            inspection = inspect_dbt.inspect_dbt(project)
+
+        self.assertTrue(report["project"]["semantic_layer"]["detected"])
+        self.assertEqual(report["project"]["semantic_layer"]["saved_query_file_count"], 1)
+        self.assertTrue(inspection["semantic_layer"]["detected"])
 
     def test_a_non_dbt_directory_reports_nothing_instead_of_inventing_conventions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
