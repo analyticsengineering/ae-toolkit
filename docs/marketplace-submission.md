@@ -78,7 +78,7 @@ If the destination exists, inspect it before replacing it. A marketplace install
 2. Open **Customize** from the Cursor sidebar.
 3. Confirm the plugin appears.
 4. Confirm the expected rules, skills, agents, commands, hooks, and MCP server are discovered.
-5. Run all nine free workflows with the optional MCP endpoint disabled.
+5. Sample the local skills and `/ae-validate` planning with the optional MCP endpoint disabled.
 6. Confirm unavailable connected tools fail clearly and local workflows continue.
 7. Confirm destructive database statements are denied and approved read-only operations still ask for target confirmation.
 
@@ -105,13 +105,13 @@ Most of this list is enforced by `tests/run_tests.py` and by CI rather than by r
 - [x] README documents configuration and usage.
 - [x] Privacy policy states zero V1 anonymous telemetry and exact opt-in connected data classes. A test asserts no shipped hook or script can import a networking module, so the claim fails loudly rather than quietly.
 - [x] Security policy documents disclosure and destructive database posture.
-- [x] Nine free workflows have no dependency on the remote MCP service; the public contract suite checks that their command boundaries remain explicitly local-only.
+- [x] Local skills have no dependency on the remote MCP service; the public contract suite checks command boundaries remain explicitly local-only.
 - [x] Connected features are labeled conditional; the repository does not imply that configuration equals implementation.
 - [x] No credentials, tokens, private data, production rows, or learner submissions are committed.
 - [x] Offline and unavailable-server behavior was tested.
 - [x] Hook and unit tests pass.
 - [ ] Local test completed under `~/.cursor/plugins/local`. **Needs the application.** Follow [Install locally](../README.md#install-locally).
-- [ ] Cursor was reloaded and all expected components were checked in Customize. **Needs the application.** Expect twelve skills, four agents, sixteen commands, three rules, the hook configuration, and one MCP server; a component that fails to load is absent rather than reported, so a short list is the signal.
+- [ ] Cursor was reloaded and all expected components were checked in Customize. **Needs the application.** Expect twenty-five skills, four agents, seventeen commands, three rules, the hook configuration, and one MCP server; a component that fails to load is absent rather than reported, so a short list is the signal.
 - [ ] Repository URL was submitted at [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish). **Needs a person**, since submission is a web form.
 - [ ] Manual review feedback is tracked and resolved before release.
 

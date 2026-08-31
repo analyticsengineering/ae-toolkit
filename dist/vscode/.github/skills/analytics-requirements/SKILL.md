@@ -20,9 +20,8 @@ Obtain:
 - Requester, decision to be made, audience, delivery format, cadence, freshness, and deadline.
 - Business terms, metric intent, population, exclusions, dimensions, comparison periods, and history needs.
 - Known data sources, owners, privacy constraints, and existing canonical definitions.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, drive toward an approvable contract. In Learn mode, explain why each requirement prevents analytical ambiguity. In Assessment mode, evaluate the learner's submitted specification without filling in missing answers.
+Default silently to Work mode and drive toward an approvable contract. In Learn mode, explain why each requirement prevents analytical ambiguity. In Assessment mode, evaluate the learner's submitted specification without filling in missing answers.
 
 ## Inspection procedure
 

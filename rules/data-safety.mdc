@@ -9,6 +9,7 @@ alwaysApply: true
 - Minimize data. Prefer schemas, metadata, aggregates, and redacted samples; never expose secrets, credentials, PII, or unnecessary raw rows.
 - Treat databases as read-only and analysis-first: inspect SQL and artifacts before execution; then prefer metadata, query plans, bounded `SELECT`s, and explicit limits.
 - V1 never executes `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `DROP`, `TRUNCATE`, or `ALTER`; provide reviewed proposals only. Approved database execution is limited to `SELECT` or `EXPLAIN` against a confirmed local/development target.
+- The `validate-dbt` workflow may run one bounded `dbt compile`, `test`, `run`, or `build` command after preview and explicit approval against a named local/development target. It never infers a target, runs globally, uses `--full-refresh`, or validates against production. This exception covers dbt-managed development objects only; it does not permit direct database mutation statements.
 - Connected Advanced behavior requires an explicit user trigger, successful authentication, destination and content preview, best-effort `scripts/redact_secrets.py` inspection, and explicit approval before access or transmission.
 - Use least privilege, report what was accessed or sent, and verify the result. If a gate fails, stay local.
 - Read and follow `references/privacy.md` for detailed handling.

@@ -19,9 +19,8 @@ Obtain:
 
 - The target model's purpose and the upstream models or sources it draws from.
 - The convention profile, from `.ae/project.yml` or fresh inference.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, build the model. In Learn mode, explain each modeling decision as it is made. In Assessment mode, evaluate a submitted model without writing or repairing it.
+Default silently to Work mode and build the model. In Learn mode, explain each modeling decision as it is made. In Assessment mode, evaluate a submitted model without writing or repairing it.
 
 ## Build procedure
 
@@ -85,7 +84,7 @@ List conventions as applied decisions with their support counts, not as question
 - Confirm each selected column exists in the cited upstream model.
 - Confirm every column named by an inherited or declared partition, cluster, or sort key exists in the model being written.
 - Re-read the generated SQL against the profile's style conventions before finishing.
-- Propose the smallest `dbt build --select` command that would validate the model, without running it.
+- Hand the completed scope to `validate-dbt`, which plans the smallest selector and asks before any warehouse-capable command. Building the model itself never runs dbt.
 
 ## Safety/privacy
 

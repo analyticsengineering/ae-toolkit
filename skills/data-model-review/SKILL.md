@@ -21,9 +21,8 @@ Obtain or mark missing:
 - Entity definitions, event/process boundaries, model DDL/ERD, source behavior, and sample cardinalities.
 - Declared grain for every fact-like model and keys for every model.
 - Required history, correction, deletion, latency, and late-arriving-data behavior.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, recommend a decision-ready design. In Learn mode, explain grain and tradeoffs with examples. In Assessment mode, grade submitted reasoning against stated requirements and never supply the design answer.
+Default silently to Work mode and recommend a decision-ready design. In Learn mode, explain grain and tradeoffs with examples. In Assessment mode, grade submitted reasoning against stated requirements and never supply the design answer.
 
 ## Inspection procedure
 

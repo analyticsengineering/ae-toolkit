@@ -4,6 +4,13 @@
     {"command": "git reset --hard HEAD~1", "permission": "deny", "reason_code": "destructive-git-reset"},
     {"command": "psql -c 'DROP TABLE customers'", "permission": "deny", "reason_code": "destructive-database-ddl"},
     {"command": "dbt build --target dev", "permission": "ask", "reason_code": "dbt-execution"},
+    {"command": "dbt compile --select fct_orders --target dev", "permission": "ask", "reason_code": "dbt-execution"},
+    {"command": "dbt show --select fct_orders --target dev", "permission": "ask", "reason_code": "dbt-execution"},
+    {"command": "dbt docs generate --target dev", "permission": "ask", "reason_code": "dbt-execution"},
+    {"command": "dbt deps", "permission": "ask", "reason_code": "dbt-dependency-install"},
+    {"command": "dbt build --select fct_orders --target dev --full-refresh", "permission": "deny", "reason_code": "dbt-full-refresh"},
+    {"command": "dbt parse --project-dir .", "permission": "allow", "reason_code": "no-risk-pattern"},
+    {"command": "dbt ls --select fct_orders", "permission": "allow", "reason_code": "no-risk-pattern"},
     {"command": "python3 scripts/profile_dataset.py sample.csv", "permission": "allow", "reason_code": "no-risk-pattern"},
     {"command": "git diff --check", "permission": "allow", "reason_code": "no-risk-pattern"}
   ],

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest `1.1.x` release. Users should reproduce a report against the latest version before filing when practical.
+Security fixes are provided for the latest `1.2.x` release. Users should reproduce a report against the latest version before filing when practical.
 
 ## Report a vulnerability
 

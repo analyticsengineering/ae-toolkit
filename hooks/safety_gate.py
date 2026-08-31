@@ -21,7 +21,13 @@ DB_CLIENT = re.compile(
     re.IGNORECASE,
 )
 DBT_EXECUTION = re.compile(
-    r"\bdbt\s+(?:run|build|test|snapshot|seed|run-operation)\b",
+    r"\bdbt\b[^;&|]*?\b(?:run|build|test|snapshot|seed|run-operation|compile|show|debug)\b"
+    r"|\bdbt\b[^;&|]*?\bdocs\s+generate\b",
+    re.IGNORECASE,
+)
+DBT_DEPENDENCIES = re.compile(r"\bdbt\b[^;&|]*?\bdeps\b", re.IGNORECASE)
+DBT_FULL_REFRESH = re.compile(
+    r"\bdbt\b[^;&|]*?\b(?:run|build)\b[^;&|]*--full-refresh\b",
     re.IGNORECASE,
 )
 DB_READ = re.compile(r"\b(?:select|explain)\b", re.IGNORECASE)
@@ -101,11 +107,27 @@ def classify(command: str) -> dict[str, str]:
             "database-mutation",
         )
 
+    if DBT_FULL_REFRESH.search(normalized):
+        return decision(
+            "deny",
+            "Blocked dbt --full-refresh because it can replace an unbounded set of warehouse objects.",
+            "Use a scoped migration or reviewed manual procedure; automated validation never full-refreshes.",
+            "dbt-full-refresh",
+        )
+
+    if DBT_DEPENDENCIES.search(normalized):
+        return decision(
+            "ask",
+            "This command installs or updates dbt packages in the workspace.",
+            "Run dbt deps only after reviewing package and lock-file changes.",
+            "dbt-dependency-install",
+        )
+
     if DBT_EXECUTION.search(normalized):
         return decision(
             "ask",
-            "This dbt command may execute warehouse queries. Confirm the target and that it is a local or development environment.",
-            "Run dbt only after explicit approval; verify target, credentials, and expected models first.",
+            "This dbt command may connect to or change a warehouse. Confirm the exact scope and a named local or development target.",
+            "Run dbt only after explicit approval; verify target, selector, credentials, and expected models first.",
             "dbt-execution",
         )
 

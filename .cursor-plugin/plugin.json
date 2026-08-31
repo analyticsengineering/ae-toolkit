@@ -1,7 +1,7 @@
 {
   "name": "analytics-engineering-toolkit",
-  "version": "1.1.0",
-  "description": "AI workflows for modern data professionals.",
+  "version": "1.2.0",
+  "description": "Make your AI coding agent think like an analytics engineer.",
   "author": {
     "name": "AnalyticsEngineering.com"
   },

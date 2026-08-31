@@ -6,7 +6,7 @@ Thanks for improving Analytics Engineering Toolkit.
 
 Every change should preserve these V1 guarantees:
 
-- nine core workflows remain genuinely free and usable without an AnalyticsEngineering.com account or server;
+- local skills remain genuinely useful without an AnalyticsEngineering.com account or server;
 - connected capabilities are described as optional and conditional, never as available merely because an MCP URL is configured;
 - workspace transfer, database access, and course submission are never automatic;
 - connected actions have a specific preview and explicit approval;
@@ -120,7 +120,7 @@ Then smoke-test the local plugin:
 
 1. reload Cursor;
 2. verify the manifest and expected components in Customize;
-3. run all nine free workflows with the MCP endpoint unavailable;
+3. sample the local skills and `/ae-validate` planning with the MCP endpoint unavailable;
 4. verify connected requests show destination and payload scope before approval;
 5. verify cancellation sends nothing;
 6. verify destructive database operations are denied;

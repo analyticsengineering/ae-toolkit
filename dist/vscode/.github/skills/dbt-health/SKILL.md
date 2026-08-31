@@ -20,9 +20,8 @@ Obtain:
 - Audit scope, business-critical models/exposures, dbt version, adapter, and environments.
 - Available artifacts: `manifest.json` first, then `run_results.json`, `catalog.json`, `sources.json`, `semantic_manifest.json`, logs, or CI evidence.
 - Project configuration and package/mesh boundaries where relevant.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, prioritize remediations by reliability impact. In Learn mode, explain artifact fields and dbt concepts. In Assessment mode, evaluate the submitted diagnosis without revealing the answer or repairing the project.
+Default silently to Work mode and prioritize remediations by reliability impact. In Learn mode, explain artifact fields and dbt concepts. In Assessment mode, evaluate the submitted diagnosis without revealing the answer or repairing the project.
 
 ## Inspection procedure
 

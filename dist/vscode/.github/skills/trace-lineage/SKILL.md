@@ -21,9 +21,8 @@ Obtain:
 
 - The figure to trace, and where the requester met it: a model column, a BI field, a metric, or a number in a report.
 - The project root and any BI or semantic-layer directories inside it.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, deliver the chain and its risks. In Learn mode, explain each transformation as it is traversed. In Assessment mode, evaluate a submitted trace without completing it.
+Default silently to Work mode and deliver the chain and its risks. In Learn mode, explain each transformation as it is traversed. In Assessment mode, evaluate a submitted trace without completing it.
 
 ## Trace procedure
 

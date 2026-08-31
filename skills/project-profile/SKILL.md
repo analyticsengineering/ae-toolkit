@@ -20,15 +20,14 @@ Obtain:
 
 - Project root and whether `.ae/project.yml` already exists.
 - Scope of the profile when a monorepo holds more than one dbt project.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, produce a profile ready to accept. In Learn mode, explain why each convention matters downstream. In Assessment mode, evaluate a submitted profile without correcting it.
+Default silently to Work mode and produce a profile ready to use. In Learn mode, explain why each convention matters downstream. In Assessment mode, evaluate a submitted profile without correcting it.
 
 ## Inspection procedure
 
 1. Confirm the project root contains `dbt_project.yml`. Without it there is nothing to infer, and saying so is the correct answer.
 2. Run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json`. Treat its tallies as the evidence base; do not restate conventions from memory of another repository.
-3. Read `.ae/project.yml` if it exists and compare it against the fresh inference. Report drift as drift; a human edit outranks an inference and must not be silently overwritten.
+3. Read `.ae/project.yml` if it exists and compare its stored profile fingerprint against fresh inference. Report a changed fingerprint as staleness, then compare values; a human edit outranks an inference and must not be silently overwritten.
 4. Inspect the highest-signal disagreements directly. When a convention is `split`, open the contradicting files named in `examples` and determine whether the split is a real disagreement or an artifact of layering, vendored packages, or a legacy directory mid-migration.
 5. Separate the counted conventions from the uncounted ones. Materializations, schedules, and orchestration are declared configuration, not inferred patterns, and are reported as facts.
 6. Identify what the repository cannot answer at all, and carry those forward as open questions rather than defaults.

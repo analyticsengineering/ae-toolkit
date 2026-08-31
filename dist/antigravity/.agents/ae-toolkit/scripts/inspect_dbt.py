@@ -224,6 +224,8 @@ def _yaml_summary(path: Path, root: Path) -> dict[str, Any]:
         "column_entries": len(re.findall(r"(?m)^\s*-\s+name\s*:", text)),
         "contains_exposures": bool(re.search(r"(?m)^\s*exposures\s*:", text)),
         "contains_metrics": bool(re.search(r"(?m)^\s*metrics\s*:", text)),
+        "contains_semantic_models": bool(re.search(r"(?m)^\s*semantic_models\s*:", text)),
+        "contains_saved_queries": bool(re.search(r"(?m)^\s*saved_queries\s*:", text)),
     }
 
 
@@ -246,6 +248,24 @@ def _sql_summary(path: Path, root: Path) -> dict[str, Any]:
         "line_count": len(text.splitlines()),
         "patterns": pattern_counts,
         "configured_materializations": materializations,
+        "incremental_strategies": sorted(
+            set(
+                re.findall(
+                    r"incremental_strategy\s*=\s*['\"]([A-Za-z_][\w-]*)['\"]",
+                    text,
+                    flags=re.I,
+                )
+            )
+        ),
+        "on_schema_change": sorted(
+            set(
+                re.findall(
+                    r"on_schema_change\s*=\s*['\"]([A-Za-z_][\w-]*)['\"]",
+                    text,
+                    flags=re.I,
+                )
+            )
+        ),
         "has_unique_key_config": bool(
             re.search(r"\bunique_key\s*=", text, flags=re.I)
         ),
@@ -297,6 +317,9 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
 
     sql_details = [_sql_summary(file, root) for file in model_files]
     yaml_details = [_yaml_summary(file, root) for file in yaml_files]
+    lookml_files = [
+        _relative(file, root) for file in files if file.suffix.lower() == ".lkml"
+    ]
     aggregate_patterns: Counter[str] = Counter()
     materializations: Counter[str] = Counter()
     directories: Counter[str] = Counter()
@@ -375,6 +398,24 @@ def inspect_dbt(path: str | Path) -> dict[str, Any]:
         "sql_patterns": dict(sorted(aggregate_patterns.items())),
         "configured_materializations": dict(sorted(materializations.items())),
         "models": sql_details,
+        "semantic_layer": {
+            "detected": any(
+                detail["contains_semantic_models"] or detail["contains_metrics"]
+                for detail in yaml_details
+            ),
+            "semantic_model_file_count": sum(
+                detail["contains_semantic_models"] for detail in yaml_details
+            ),
+            "metric_file_count": sum(detail["contains_metrics"] for detail in yaml_details),
+            "saved_query_file_count": sum(
+                detail["contains_saved_queries"] for detail in yaml_details
+            ),
+        },
+        "bi": {
+            "looker_detected": bool(lookml_files),
+            "lookml_file_count": len(lookml_files),
+            "lookml_files": lookml_files,
+        },
         "findings": sorted(findings, key=lambda item: (item["path"], item["code"])),
         "execution_note": "Static inspection only; dbt was not executed.",
     }

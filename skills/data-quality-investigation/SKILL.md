@@ -20,9 +20,8 @@ Obtain:
 - Symptom, reporter, first observation, expected versus actual result, affected asset/metric, and business impact.
 - Time window, environment, recent known changes, pipeline lineage, owners, and available logs/tests/artifacts.
 - Access and privacy boundaries plus incident urgency.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, minimize impact and time-to-evidence. In Learn mode, explain hypothesis testing and evidence quality. In Assessment mode, evaluate the learner's submitted hypotheses and tests without revealing the investigation answer.
+Default silently to Work mode and minimize impact and time-to-evidence. In Learn mode, explain hypothesis testing and evidence quality. In Assessment mode, evaluate the learner's submitted hypotheses and tests without revealing the investigation answer.
 
 ## Inspection procedure
 

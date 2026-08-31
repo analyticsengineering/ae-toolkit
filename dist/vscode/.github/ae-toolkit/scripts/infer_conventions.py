@@ -9,6 +9,7 @@ where the repository genuinely disagrees with itself.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -279,6 +280,18 @@ OBSERVATION_META: dict[str, dict[str, Any]] = {
     "sources.database": {"question": "What database should new sources declare?"},
     "sources.schema_style": {"question": "Should new source schemas be literal or templated?"},
     "sources.freshness_required": {"question": "Should new sources declare freshness?", "decode": _as_bool},
+    "sources.identifier_required": {
+        "question": "Should source tables declare warehouse identifiers?",
+        "decode": _as_bool,
+    },
+    "sources.loaded_at_field": {"question": "Which field represents source load time?"},
+    "sources.freshness_warn_after": {"question": "Which warning threshold should new sources use?"},
+    "sources.freshness_error_after": {"question": "Which error threshold should new sources use?"},
+    "sources.filename_pattern": {"question": "How should source YAML files be named?"},
+    "incremental.strategy": {"question": "Which incremental strategy should new models use?"},
+    "incremental.unique_key_style": {"question": "How should incremental unique keys be declared?"},
+    "incremental.on_schema_change": {"question": "How should incremental models handle schema changes?"},
+    "incremental.filter_timestamp": {"question": "Which timestamp should incremental filters use?"},
     "documentation.model_descriptions_required": {
         "question": "Should every model carry a description?",
         "decode": _as_bool,
@@ -370,7 +383,46 @@ def _observe_models(root: Path, model_paths: list[str], tallies: dict[str, Tally
         if key_label:
             tallies["surrogate_key.macro"].add(key_label, relative)
 
+        _observe_incremental(text, relative, tallies)
         _observe_sql_style(text, relative, tallies)
+
+
+def _config_value(text: str, key: str) -> str | None:
+    match = re.search(rf"\b{re.escape(key)}\s*=\s*(['\"])(.*?)\1", text, re.I | re.S)
+    return match.group(2).strip() if match else None
+
+
+def _observe_incremental(text: str, relative: str, tallies: dict[str, Tally]) -> None:
+    if not re.search(r"materialized\s*=\s*['\"]incremental['\"]|\bis_incremental\s*\(", text, re.I):
+        return
+
+    strategy = _config_value(text, "incremental_strategy")
+    if strategy:
+        tallies["incremental.strategy"].add(strategy, relative)
+
+    unique_key = re.search(r"\bunique_key\s*=\s*(\[[^\]]+\]|['\"][^'\"]+['\"])", text, re.I | re.S)
+    if unique_key:
+        style = "list" if unique_key.group(1).lstrip().startswith("[") else "single"
+        tallies["incremental.unique_key_style"].add(style, relative)
+
+    schema_change = _config_value(text, "on_schema_change")
+    if schema_change:
+        tallies["incremental.on_schema_change"].add(schema_change, relative)
+
+    incremental_block = re.search(
+        r"\{%-?\s*if\s+is_incremental\s*\(\s*\)\s*-?%\}(.*?)\{%-?\s*endif\s*-?%\}",
+        text,
+        re.I | re.S,
+    )
+    if incremental_block:
+        predicate = incremental_block.group(1)
+        timestamp = re.search(
+            r"\bwhere\b.*?\b([A-Za-z_][\w]*?(?:_at|_date|_timestamp|_time))\b\s*(?:>|>=|between)",
+            predicate,
+            re.I | re.S,
+        )
+        if timestamp:
+            tallies["incremental.filter_timestamp"].add(timestamp.group(1), relative)
 
 
 def _observe_sql_style(text: str, relative: str, tallies: dict[str, Tally]) -> None:
@@ -471,6 +523,10 @@ def _observe_yaml(root: Path, yaml_paths: list[str], tallies: dict[str, Tally]) 
                 if isinstance(source, dict) and source.get("name"):
                     sources.append(source)
                     _observe_source(source, relative, tallies)
+                    tallies["sources.filename_pattern"].add(
+                        _source_filename_pattern(Path(relative), str(source["name"])),
+                        relative,
+                    )
 
     _observe_yaml_strategy(grouped_files, tallies)
     return {
@@ -495,6 +551,45 @@ def _observe_source(source: dict[str, Any], relative: str, tallies: dict[str, Ta
         isinstance(table, dict) and table.get("freshness") for table in tables
     )
     tallies["sources.freshness_required"].add("true" if has_freshness else "false", relative)
+    identifiers = [
+        table
+        for table in tables
+        if isinstance(table, dict) and isinstance(table.get("identifier"), str)
+    ]
+    if tables:
+        tallies["sources.identifier_required"].add(
+            "true" if len(identifiers) == len(tables) else "false",
+            relative,
+        )
+
+    loaded_at = source.get("loaded_at_field")
+    if isinstance(loaded_at, str) and loaded_at.strip():
+        tallies["sources.loaded_at_field"].add(loaded_at.strip(), relative)
+
+    freshness_blocks = [source.get("freshness")]
+    freshness_blocks.extend(
+        table.get("freshness")
+        for table in tables
+        if isinstance(table, dict) and table.get("freshness")
+    )
+    for freshness in freshness_blocks:
+        if not isinstance(freshness, dict):
+            continue
+        for level in ("warn_after", "error_after"):
+            threshold = freshness.get(level)
+            if not isinstance(threshold, dict):
+                continue
+            count, period = threshold.get("count"), threshold.get("period")
+            if count is not None and period:
+                tallies[f"sources.freshness_{level}"].add(f"{count} {period}", relative)
+
+
+def _source_filename_pattern(path: Path, source_name: str) -> str:
+    if path.stem == source_name:
+        return f"{{source}}{path.suffix}"
+    if path.stem == f"_{source_name}":
+        return f"_{{source}}{path.suffix}"
+    return path.name
 
 
 def _filename_pattern(path: Path, model: str) -> str:
@@ -558,7 +653,94 @@ def _detect_adapter(root: Path) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _project_facts(root: Path, report: dict[str, Any]) -> dict[str, Any]:
+def _profile_fingerprint(root: Path, paths: Iterable[str]) -> str:
+    digest = hashlib.sha256()
+    for relative in sorted(set(paths)):
+        path = root / relative
+        if not path.is_file():
+            continue
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _repository_context(root: Path, yaml_paths: list[str]) -> dict[str, Any]:
+    lookml_files = [
+        path
+        for path in inspect_dbt._walk_files(root)
+        if path.suffix.lower() == ".lkml" and _is_own_code(path.relative_to(root).as_posix())
+    ]
+    semantic_files = 0
+    metric_files = 0
+    for relative in yaml_paths:
+        text = inspect_dbt._read_text(root / relative)
+        semantic_files += int(bool(re.search(r"(?m)^\s*semantic_models\s*:", text)))
+        metric_files += int(bool(re.search(r"(?m)^\s*metrics\s*:", text)))
+
+    orchestration: list[str] = []
+    for path in inspect_dbt._walk_files(root):
+        relative = path.relative_to(root).as_posix()
+        if not _is_own_code(relative):
+            continue
+        lowered = relative.lower()
+        if lowered in {"dbt_cloud.yml", "dbt_cloud.yaml"}:
+            orchestration.append("dbt-cloud")
+        elif path.suffix.lower() == ".py":
+            text = inspect_dbt._read_text(path)
+            if re.search(r"\bDAG\s*\(", text) and re.search(r"\bdbt\b", text, re.I):
+                orchestration.append("airflow")
+    workflows = root / ".github" / "workflows"
+    if workflows.is_dir() and any(
+        "dbt" in inspect_dbt._read_text(path).lower()
+        for path in workflows.glob("*.y*ml")
+        if path.is_file()
+    ):
+        orchestration.append("github-actions")
+
+    return {
+        "semantic_layer": {
+            "detected": bool(semantic_files or metric_files),
+            "semantic_model_file_count": semantic_files,
+            "metric_file_count": metric_files,
+        },
+        "bi": {
+            "looker_detected": bool(lookml_files),
+            "lookml_file_count": len(lookml_files),
+        },
+        "orchestration": sorted(set(orchestration)),
+    }
+
+
+def _stored_profile_state(root: Path, current_fingerprint: str) -> dict[str, Any]:
+    path = root / ".ae" / "project.yml"
+    if not path.is_file():
+        return {
+            "present": False,
+            "path": ".ae/project.yml",
+            "stale": None,
+            "stored_fingerprint": None,
+            "current_fingerprint": current_fingerprint,
+        }
+    document = parse_yaml(inspect_dbt._read_text(path))
+    project = document.get("project") if isinstance(document, dict) else None
+    stored = project.get("profile_fingerprint") if isinstance(project, dict) else None
+    return {
+        "present": True,
+        "path": ".ae/project.yml",
+        "stale": None if not stored else stored != current_fingerprint,
+        "stored_fingerprint": stored,
+        "current_fingerprint": current_fingerprint,
+    }
+
+
+def _project_facts(
+    root: Path,
+    report: dict[str, Any],
+    model_paths: list[str],
+    yaml_paths: list[str],
+) -> dict[str, Any]:
     project = report.get("project") if isinstance(report.get("project"), dict) else {}
     adapter, adapter_source = _detect_adapter(root)
 
@@ -575,13 +757,25 @@ def _project_facts(root: Path, report: dict[str, Any]) -> dict[str, Any]:
                 if name:
                     packages.append(str(name))
 
-    return {
+    fingerprint_inputs = [
+        *model_paths,
+        *yaml_paths,
+        *[
+            candidate
+            for candidate in ("dbt_project.yml", "dbt_project.yaml", "packages.yml", "dependencies.yml")
+            if (root / candidate).is_file()
+        ],
+    ]
+    facts = {
         "name": project.get("name"),
         "transformation": "dbt",
         "adapter": adapter,
         "adapter_source": adapter_source,
         "packages": sorted(set(packages)),
+        "profile_fingerprint": _profile_fingerprint(root, fingerprint_inputs),
     }
+    facts.update(_repository_context(root, yaml_paths))
+    return facts
 
 
 def infer_conventions(path: str | Path) -> dict[str, Any]:
@@ -642,7 +836,7 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
                 }
             )
 
-    facts = _project_facts(root, report)
+    facts = _project_facts(root, report, model_paths, yaml_paths)
     facts.update(
         {
             "model_count": len(model_paths),
@@ -658,6 +852,7 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
         "root": str(root),
         "is_dbt_project": True,
         "project": facts,
+        "profile": _stored_profile_state(root, facts["profile_fingerprint"]),
         "conventions": {section: conventions[section] for section in sorted(conventions)},
         "open_questions": open_questions,
         "evidence": evidence,

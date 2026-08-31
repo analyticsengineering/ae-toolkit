@@ -21,9 +21,8 @@ Obtain without soliciting secrets:
 - API documentation/version, resource relationships, pagination, rate limits, quotas, filtering, ordering, update/delete semantics, and terms.
 - Authentication **method and secret reference mechanism only**, not credential values.
 - Runtime/orchestrator, storage layers, network constraints, observability, ownership, and recovery objectives.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, produce an implementation-ready architecture and phased plan. In Learn mode, explain reliability tradeoffs. In Assessment mode, evaluate the learner's submitted design against failure scenarios without showing a reference answer.
+Default silently to Work mode and produce an implementation-ready architecture and phased plan. In Learn mode, explain reliability tradeoffs. In Assessment mode, evaluate the learner's submitted design against failure scenarios without showing a reference answer.
 
 ## Inspection procedure
 

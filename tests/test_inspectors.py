@@ -215,6 +215,10 @@ class ConventionInferenceTests(unittest.TestCase):
         self.assertTrue(conventions["sql"]["leading_commas"])
         self.assertTrue(conventions["sql"]["lowercase_keywords"])
         self.assertEqual(conventions["sql"]["indent_width"], 4)
+        self.assertEqual(conventions["sources"]["loaded_at_field"], "_loaded_at")
+        self.assertEqual(conventions["sources"]["freshness_warn_after"], "12 hour")
+        self.assertFalse(conventions["sources"]["identifier_required"])
+        self.assertEqual(conventions["sources"]["filename_pattern"], "sources.yml")
         self.assertEqual(report["open_questions"], [])
 
         for key in ("models.staging_prefix", "sql.leading_commas", "surrogate_key.macro"):
@@ -277,7 +281,10 @@ class ConventionInferenceTests(unittest.TestCase):
             polluted = infer_conventions.infer_conventions(project)
 
         self.assertEqual(polluted["conventions"], baseline["conventions"])
-        self.assertEqual(polluted["project"]["excluded_vendored_files"], 1)
+        self.assertEqual(
+            polluted["project"]["excluded_vendored_files"],
+            baseline["project"]["excluded_vendored_files"] + 1,
+        )
         self.assertEqual(polluted["conventions"]["tests"]["key"], "data_tests")
 
     def test_uppercase_model_names_are_read_as_conventions_not_as_absence(self) -> None:
@@ -437,6 +444,68 @@ class ConventionInferenceTests(unittest.TestCase):
             )
             self.assertEqual(forced.returncode, 0, forced.stderr)
             self.assertNotIn("hand edited", profile.read_text(encoding="utf-8"))
+
+    def test_profile_fingerprint_detects_repository_drift_without_overwriting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            shutil.copytree(self.fixture("clean_project"), project)
+            initial = infer_conventions.infer_conventions(project)
+            profile = project / ".ae" / "project.yml"
+            profile.parent.mkdir()
+            profile.write_text(
+                "version: 1\nproject:\n"
+                f"  profile_fingerprint: {initial['project']['profile_fingerprint']}\n"
+                "conventions:\n  models:\n    staging_prefix: custom_\n",
+                encoding="utf-8",
+            )
+
+            current = infer_conventions.infer_conventions(project)
+            self.assertFalse(current["profile"]["stale"])
+            model = project / "models" / "staging" / "stg_orders.sql"
+            model.write_text(model.read_text(encoding="utf-8") + "\n-- changed\n", encoding="utf-8")
+            changed = infer_conventions.infer_conventions(project)
+
+        self.assertTrue(changed["profile"]["stale"])
+        self.assertEqual(
+            changed["profile"]["stored_fingerprint"],
+            initial["project"]["profile_fingerprint"],
+        )
+
+    def test_incremental_semantic_bi_and_orchestration_context_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            shutil.copytree(self.fixture("clean_project"), project)
+            incremental = project / "models" / "fct_events.sql"
+            incremental.write_text(
+                "{{ config(materialized='incremental', incremental_strategy='merge', "
+                "unique_key='event_id', on_schema_change='sync_all_columns') }}\n"
+                "select event_id, updated_at from {{ ref('stg_orders') }}\n"
+                "{% if is_incremental() %}\n"
+                "where updated_at >= (select max(updated_at) from {{ this }})\n"
+                "{% endif %}\n",
+                encoding="utf-8",
+            )
+            (project / "models" / "semantic.yml").write_text(
+                "semantic_models:\n  - name: orders\nmetrics:\n  - name: order_count\n",
+                encoding="utf-8",
+            )
+            (project / "orders.view.lkml").write_text("view: orders {}\n", encoding="utf-8")
+            workflows = project / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "dbt.yml").write_text("jobs:\n  build:\n    name: dbt build\n", encoding="utf-8")
+
+            report = infer_conventions.infer_conventions(project)
+            inspection = inspect_dbt.inspect_dbt(project)
+
+        self.assertEqual(report["conventions"]["incremental"]["strategy"], "merge")
+        self.assertEqual(report["conventions"]["incremental"]["unique_key_style"], "single")
+        self.assertEqual(report["conventions"]["incremental"]["on_schema_change"], "sync_all_columns")
+        self.assertEqual(report["conventions"]["incremental"]["filter_timestamp"], "updated_at")
+        self.assertTrue(report["project"]["semantic_layer"]["detected"])
+        self.assertTrue(report["project"]["bi"]["looker_detected"])
+        self.assertIn("github-actions", report["project"]["orchestration"])
+        self.assertTrue(inspection["semantic_layer"]["detected"])
+        self.assertTrue(inspection["bi"]["looker_detected"])
 
 
 if __name__ == "__main__":

@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-31
+
+### Added
+
+- Twelve auto-discovered day-to-day skills for source setup, model documentation, model tests, safe refactoring, coordinated renames, migration planning, incremental models, metric definitions, semantic layers, BI models, freshness investigations, and YAML maintenance.
+- `/ae-validate` and the `validate-dbt` skill, which plan the smallest dbt selector statically, require an explicit local/development target and approval before warehouse-capable execution, interpret current dbt artifacts, and re-plan after approved repairs.
+- Deterministic validation planning and result interpretation scripts. Neither script executes dbt or opens a network connection.
+- Project-profile evidence for source identifiers, loaded-at fields, freshness thresholds, source filenames, incremental strategy, unique-key style, schema-change behavior, and incremental timestamps.
+- Repository context detection for MetricFlow/dbt semantic files, LookML, and repository-declared orchestration, plus a content fingerprint that reports a stored profile as stale without overwriting human edits.
+
+### Changed
+
+- Work mode is now the silent default. Natural-language requests automatically compose the relevant analytics-engineering skills; users no longer need to select modes, agents, or slash commands for ordinary work.
+- Public documentation now leads with outcomes and plain-language examples. Commands remain optional aliases rather than the primary product interface.
+- Cursor, VS Code, and Antigravity now ship the same twenty-five canonical skills and seventeen optional command workflows.
+
+### Security
+
+- `dbt compile`, `show`, `debug`, and `docs generate` remain approval-gated because they may connect to a warehouse; `dbt deps` requires approval because it changes local packages.
+- Automated validation denies `--full-refresh`, global selectors, inferred targets, and production-like targets. Static `dbt parse` and `dbt ls` remain low-friction.
+
 ## [1.1.0] - 2026-08-29
 
 ### Added

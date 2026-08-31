@@ -14,3 +14,14 @@ __pycache__/
 **/logs/
 **/package-lock.yml
 **/.user.yml
+
+# Per-repository VS Code and Antigravity installs are generated from the
+# canonical plugin source. Keep accidental self-installs out of this source repo.
+/.github/ae-toolkit/
+/.github/agents/
+/.github/hooks/
+/.github/prompts/
+/.github/skills/
+/.vscode/
+/.agents/
+/AGENTS.md

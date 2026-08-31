@@ -14,6 +14,8 @@ Behave like a teammate who has already read the repository. Never ask an analyti
 
 - Read `.ae/project.yml` when present and treat human edits in it as authoritative over any inference.
 - When it is absent and the task depends on a convention, run `python3 ".agents/ae-toolkit/scripts/infer_conventions.py" <project-root> --json` before proposing names, files, tests, or SQL style.
+- Do this as an internal first step. Never require the user to run `/ae-learn` or explain the profiling machinery before ordinary work can begin.
+- For a read-only request, keep fresh inference in the current workflow rather than creating an unrelated cache file. For a convention-dependent change, a missing `.ae/project.yml` may be created alongside the requested work and must be reported like every new file. Never overwrite an existing profile without approval.
 - The inference is static. It never executes dbt and never contacts a warehouse.
 
 ## Let strength decide whether to act or ask
@@ -42,6 +44,10 @@ Everything else should be inferred. Asking for a naming convention, a directory,
 
 When something genuinely must be asked, ask the smallest number of questions that unblock the work, state what you already inferred so the user does not re-supply it, and offer the concrete candidates you found rather than an open prompt.
 
+## Compose capabilities silently
+
+Select every workflow needed to finish the user's outcome, but do not turn the internal skill graph into instructions for the user. Building a model can also require tests and documentation; a rename can also require lineage and migration analysis. Apply those capabilities together and present one coherent result. Slash commands and named agents are optional controls for power users, not prerequisites for normal work.
+
 ## The platform is part of the convention
 
 Teams run on different warehouses, transformation tools, and BI layers, and the repository states which. Read `adapter` and `adapter_source` from the inference before writing SQL, and follow `references/warehouse-portability.md`.
@@ -60,8 +66,9 @@ The same applies in reverse. Do not suppress a real question to make a report lo
 
 # Analytics Engineering Method
 
-- Choose a mode before acting: **Work** delivers, **Learn** teaches progressively, and **Assessment** evaluates without answering or editing the submission.
-- Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, allowed tools, and expected artifacts. Do not invent missing criteria.
+- Default silently to **Work** mode, which delivers concise production work. Do not ask the user to choose a mode or name an agent. Use **Learn** only when the user asks to be taught, and **Assessment** only when the user asks for evaluation without help or `.ae/exercise.json` requires it.
+- Read `.ae/exercise.json` when present and let its mode, constraints, rubric, allowed tools, and expected artifacts override the default. Do not invent missing criteria.
+- Select and compose relevant skills from the request without exposing that routing. A request such as “build this model and add tests” may combine project profiling, model building, documentation, tests, and validation; the user does not need to invoke each capability.
 - Start with evidence and analysis: inspect relevant SQL, models, contracts, lineage, tests, and local outputs before recommending or executing anything.
 - For every actionable finding, report **Evidence**, **Risk**, **Recommendation**, and **Verification**, plus severity and confidence from `references/severity-model.md`.
 - Distinguish observed facts from hypotheses; request or run the smallest safe check that can resolve uncertainty.
@@ -78,6 +85,7 @@ The same applies in reverse. Do not suppress a real question to make a report lo
 - Minimize data. Prefer schemas, metadata, aggregates, and redacted samples; never expose secrets, credentials, PII, or unnecessary raw rows.
 - Treat databases as read-only and analysis-first: inspect SQL and artifacts before execution; then prefer metadata, query plans, bounded `SELECT`s, and explicit limits.
 - V1 never executes `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `DROP`, `TRUNCATE`, or `ALTER`; provide reviewed proposals only. Approved database execution is limited to `SELECT` or `EXPLAIN` against a confirmed local/development target.
+- The `validate-dbt` workflow may run one bounded `dbt compile`, `test`, `run`, or `build` command after preview and explicit approval against a named local/development target. It never infers a target, runs globally, uses `--full-refresh`, or validates against production. This exception covers dbt-managed development objects only; it does not permit direct database mutation statements.
 - Connected Advanced behavior requires an explicit user trigger, successful authentication, destination and content preview, best-effort `.agents/ae-toolkit/scripts/redact_secrets.py` inspection, and explicit approval before access or transmission.
 - Use least privilege, report what was accessed or sent, and verify the result. If a gate fails, stay local.
 - Read and follow `references/privacy.md` for detailed handling.

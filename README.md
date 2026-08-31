@@ -1,12 +1,10 @@
 # Analytics Engineering Toolkit
 
-> AI workflows for modern data professionals.
+> Make your AI coding agent think like an analytics engineer.
 
-Analytics Engineering Toolkit is a local-first plugin for analytics engineers, data analysts, BI developers, analytics developers, data engineers working near the analytics layer, and data professionals moving into analytics engineering. It packages focused workflows, safety rules, and review guidance directly into your editor. It is authored as a Cursor plugin and also runs in VS Code and Google Antigravity; see [Install in VS Code or Antigravity](#install-in-vs-code-or-antigravity).
+Install the toolkit, open a data project, and work normally. Ask for a model, source, test, metric, refactor, investigation, or review in plain language. The toolkit gives Cursor, VS Code, and Google Antigravity repository-aware analytics-engineering workflows, deterministic inspection, validation planning, and safety guardrails.
 
-Nine core workflows are genuinely free and run from the files in this plugin. No AnalyticsEngineering.com account or remote service is required for them.
-
-The toolkit reads the repository before it asks you anything. It infers your naming, testing, documentation, and SQL conventions from the models you already have, then applies them. It asks only about things a repository cannot state: the intended grain of a model, what a metric means to the business, the freshness you promised, and whether a breaking change is acceptable.
+The local toolkit is genuinely useful without an AnalyticsEngineering.com account or remote service. It reads the repository before asking questions, learns the team's naming, testing, documentation, SQL, warehouse, semantic-layer, and BI conventions, then applies them. It asks only about what files cannot establish: intended grain, business meaning, promised freshness, or acceptance of a breaking change.
 
 ## Product boundary
 
@@ -21,7 +19,7 @@ The toolkit helps inspect, explain, review, and plan analytics work. It is analy
 - it does not silently connect to a database, run expensive queries, mutate production data, submit coursework, or upload workspace content;
 - its findings depend on the files, metadata, business definitions, and runtime evidence available in the current Cursor session.
 
-The plugin includes configuration for the optional remote MCP endpoint at `https://mcp.analyticsengineering.com/mcp`. This repository does **not** implement or bundle that server. Connected features are structurally ready but are available only when that endpoint is deployed, reachable, supports the requested tool, and implements OAuth discovery/dynamic client registration compatible with Cursor. No client secret is embedded. The nine local workflows continue to work when it is absent.
+The plugin includes configuration for the optional remote MCP endpoint at `https://mcp.analyticsengineering.com/mcp`. This repository does **not** implement or bundle that server. Connected features are structurally ready but are available only when that endpoint is deployed, reachable, supports the requested tool, and implements OAuth discovery/dynamic client registration compatible with Cursor. No client secret is embedded. Local workflows continue to work when it is absent.
 
 ## Install locally
 
@@ -101,29 +99,33 @@ One difference is worth knowing. Cursor gives shell execution and MCP calls thei
 
 ## Quick start
 
-Open a project in Cursor and ask for a workflow by name:
+Open a data project and ask for the outcome:
 
 ```text
-/ae-review-sql Review models/marts/fct_orders.sql.
-Mode: Work. Dialect: Snowflake.
-Expected grain: one row per order.
-Do not execute queries.
+Build a payment fact from stg_stripe_payments and stg_stripe_refunds.
 ```
-
-Skills can also be selected from Customize or invoked naturally:
 
 ```text
-/ae-debug Determine why yesterday's paid revenue fell.
-Start with repository evidence. Propose verification queries but do not run them.
+Add appropriate tests and business documentation to this model.
 ```
 
-Provide the intended business outcome, SQL dialect or adapter, expected grain, environment, and relevant files whenever possible. The toolkit marks missing context instead of inventing it.
+```text
+Rename customer_type to customer_segment without breaking downstream users.
+```
 
-## Workflows and commands
+```text
+Why is yesterday's paid revenue not ready yet?
+```
 
-The slash names below are the complete V1 command surface.
+Work is the default. You do not need to select a mode, agent, skill, or slash command. The toolkit profiles the repository when conventions matter and composes the necessary capabilities silently. Provide business meaning or intended grain when you know it; otherwise the toolkit asks one focused question only when repository evidence leaves a real ambiguity.
 
-### Free, local workflows
+## What it handles
+
+The toolkit supports the day-to-day model lifecycle: project conventions, sources, staging/intermediate/fact/dimension models, tests, documentation, YAML maintenance, incremental design, metrics, semantic layers, LookML and other detected BI layers, lineage, safe refactors and renames, migrations, freshness incidents, data quality, SQL and PR review, profiling, requirements, and API-to-analytics pipelines.
+
+Slash commands remain optional aliases for power users and repeatable automation.
+
+### Local command aliases
 
 These do not require the AnalyticsEngineering.com MCP service:
 
@@ -138,6 +140,7 @@ These do not require the AnalyticsEngineering.com MCP service:
 | `/ae-dbt-health` | Review the actual dbt project without blindly running dbt. |
 | `/ae-requirements` | Turn an ambiguous analytics request into definitions, assumptions, questions, and acceptance criteria. |
 | `/ae-explain` | Explain selected SQL, Python, dbt, YAML, or pipeline code at a chosen level. |
+| `/ae-validate` | Plan and run the smallest approval-gated dbt validation against an explicit local/development target. |
 
 Local means the workflow instructions are shipped in this repository. Cursor itself may still use the AI provider and settings selected by the user; “local” does not mean the language model necessarily runs on-device.
 
@@ -157,13 +160,11 @@ The first five commands have useful local basic behavior; their advanced or auth
 
 Availability is conditional. A configured MCP entry is not proof that the remote server or any particular tool exists. If the endpoint is unavailable or lacks a capability, the plugin must say so, avoid claiming a connected result, and fall back to repository-based guidance when useful. It must not silently substitute a local answer for a server-authoritative assessment or submission.
 
-## Work, Learn, and Assessment modes
+## Work, Learn, and Assessment behavior
 
-State the mode in your request:
-
-- **Work** — concise, production-oriented findings and the smallest safe next action.
-- **Learn** — explanations, questions, and progressive hints; a solution appears only after attempts, explicit request, and applicable policy.
-- **Assessment** — evaluate submitted work without answering, completing, or repairing it.
+- **Work** is automatic for ordinary requests: concise production work and the smallest safe verification.
+- **Learn** activates when you ask to be taught and uses explanations and progressive hints.
+- **Assessment** activates in an assessment workspace or when you explicitly request evaluation without help; it does not complete or repair the submission.
 
 For local workflows, the mode shapes the response but is not an access-control boundary. For connected course or assessment features, the remote server is authoritative for enrollment, exercise state, rubric, allowed help, attempt state, grading, and submission acceptance. A local file or prompt cannot override server policy. If local and server state conflict, stop and surface the conflict.
 
@@ -180,7 +181,7 @@ Do not put credentials, tokens, production row-level data, personal data, or reg
 ### Review a model without executing it
 
 ```text
-/ae-review-sql Review @models/marts/fct_subscriptions.sql in Work mode.
+Review @models/marts/fct_subscriptions.sql before I merge it.
 Expected grain is subscription_id by valid_from.
 Use the project schema and tests as evidence. Do not query the warehouse.
 ```
@@ -188,21 +189,21 @@ Use the project schema and tests as evidence. Do not query the warehouse.
 ### Plan a bounded profile
 
 ```text
-/ae-profile-data Profile @samples/orders.csv in Learn mode.
+Teach me how to profile @samples/orders.csv.
 Explain every check, avoid exposing raw customer values, and write results locally.
 ```
 
 ### Investigate an incident
 
 ```text
-/ae-debug Paid conversions dropped after the latest deploy.
+Paid conversions dropped after the latest deploy. Investigate why.
 Correlate the dbt diff, tests, and lineage first. Preview any query before asking to run it.
 ```
 
 ### Check project health
 
 ```text
-/ae-dbt-health Assess this dbt project in Work mode.
+Assess the health of this dbt project.
 Do not run dbt. Separate observed issues from checks that require execution.
 ```
 
@@ -239,6 +240,7 @@ V1 is deliberately conservative:
 - `INSERT`, `UPDATE`, `DELETE`, `MERGE`, and `ALTER` database statements are denied.
 - `SELECT` and `EXPLAIN` through recognized database clients require explicit approval and confirmation of an approved local or development target.
 - warehouse-executing dbt commands require approval and target review.
+- automated validation rejects production-like targets, unbounded selectors, and `--full-refresh`.
 - proposed SQL is text for human review, not authorization to execute it.
 
 Hooks are defense in depth, not a security sandbox. Review every command and use least-privilege, non-production credentials. See [SECURITY.md](SECURITY.md).
@@ -253,6 +255,8 @@ Python 3 is required for deterministic inspectors, hook execution, and tests. Th
 - `python3 scripts/inspect_git.py [path] [--base BRANCH] [--pretty]` reports branch, status, and diffs using read-only Git commands.
 - `python3 scripts/inspect_dbt.py [path] [--pretty]` statically inspects a dbt project without executing dbt.
 - `python3 scripts/infer_conventions.py [path] [--json] [--write] [--force]` derives the project's naming, key, test, documentation, and SQL conventions, each with the count of models supporting and contradicting it. `--write` creates `.ae/project.yml` and refuses to replace an existing profile without `--force`.
+- `python3 scripts/plan_dbt_validation.py [path] [--model NAME] [--target TARGET] [--intent static|compile|test|run|build] [--pretty]` plans a bounded dbt selector and command sequence without executing it.
+- `python3 scripts/interpret_dbt_results.py [--run-results PATH] [--log PATH] [--pretty]` classifies current dbt failures from local artifacts and redacts secret-shaped values.
 - `python3 scripts/profile_dataset.py PATH [--format csv|json|jsonl|ndjson] [--encoding NAME] [--delimiter CHAR] [--pretty]` deterministically profiles a local dataset.
 - `python3 scripts/redact_secrets.py ...` performs best-effort detection/redaction before optional cloud transmission.
 - `hooks/safety_gate.py` classifies shell and database commands before execution.
@@ -314,7 +318,7 @@ The installer already reports whether the safety gate refuses a command it must 
 
 **In VS Code**, open the scratch repository and confirm four things:
 
-1. **Chat: Open Customizations** lists the twelve skills, four agents, and sixteen prompts. A skill that loaded is present here; a skill that failed to load is silently absent, so a short list is the failure signal.
+1. **Chat: Open Customizations** lists the twenty-five skills, four agents, and seventeen prompts. A skill that loaded is present here; a skill that failed to load is silently absent, so a short list is the failure signal.
 2. Right-click the Chat view and select **Diagnostics**. It should report no load errors.
 3. Type `/` in chat. The skills and prompts should appear as slash commands; run `/ae-learn` against a dbt project and confirm it reports conventions rather than asking you to describe them.
 4. Ask the agent to run `psql -c "drop table orders"`. The hook must deny it. This is the check that matters most, because it is the one that fails silently if the hook is misconfigured.

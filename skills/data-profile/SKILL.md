@@ -20,9 +20,8 @@ Obtain:
 - Local dataset path.
 - File format, delimiter/encoding when relevant, and expected grain if known.
 - Business purpose, sensitive-field constraints, and whether full-file computation is acceptable.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, optimize for decisions and reusable evidence. In Learn mode, explain each statistic and its limits. In Assessment mode, evaluate the learner's submitted interpretation without constructing the answer.
+Default silently to Work mode and optimize for decisions and reusable evidence. In Learn mode, explain each statistic and its limits. In Assessment mode, evaluate the learner's submitted interpretation without constructing the answer.
 
 ## Inspection procedure
 

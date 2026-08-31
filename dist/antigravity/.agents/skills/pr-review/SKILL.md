@@ -20,9 +20,8 @@ Obtain:
 - Review target and base/ref, PR description or intended behavior, and repository conventions.
 - Changed files plus relevant surrounding definitions, tests, lineage, and deployment context.
 - Critical models/metrics, warehouse/dialect, and known rollout constraints.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-In Work mode, deliver merge-focused findings. In Learn mode, explain why each issue matters and how to review it. In Assessment mode, evaluate only the learner's submitted review without revealing missed-answer details that server policy withholds.
+Default silently to Work mode and deliver merge-focused findings. In Learn mode, explain why each issue matters and how to review it. In Assessment mode, evaluate only the learner's submitted review without revealing missed-answer details that server policy withholds.
 
 ## Inspection procedure
 

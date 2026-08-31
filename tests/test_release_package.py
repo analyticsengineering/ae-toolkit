@@ -40,11 +40,33 @@ def _tracked_files() -> list[str] | None:
     return [line for line in result.stdout.splitlines() if line]
 
 
+def _shipped_files() -> list[str] | None:
+    """Tracked plus non-ignored new files that would enter the package."""
+    if shutil.which("git") is None or not (PLUGIN_ROOT / ".git").exists():
+        return None
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=PLUGIN_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return [line for line in result.stdout.splitlines() if line]
+
+
 def _repository_text_files() -> list[Path]:
     """Shipped text files, excluding this module, whose patterns would self-match."""
     this_file = Path(__file__).resolve()
     files: list[Path] = []
-    for path in sorted(PLUGIN_ROOT.rglob("*")):
+    tracked = _shipped_files()
+    candidates = (
+        [PLUGIN_ROOT / relative for relative in tracked]
+        if tracked is not None
+        else list(PLUGIN_ROOT.rglob("*"))
+    )
+    for path in sorted(candidates):
         if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
             continue
         if SKIPPED_DIRS.intersection(path.parts):

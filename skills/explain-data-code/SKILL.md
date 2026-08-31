@@ -20,9 +20,8 @@ Obtain:
 - Complete relevant code, language/dialect/framework, and directly referenced definitions.
 - Intended input/output, known schema, and business purpose.
 - Requested explanation level: **beginner**, **analyst**, or **analytics-engineer**.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-If level is unstated, infer from the user's vocabulary and say which level was used. In Work mode, optimize for concise operational understanding. In Learn mode, teach progressively and invite a check for understanding. In Assessment mode, ask the learner to explain first and evaluate only their submitted reasoning; do not provide an answer or answer-equivalent walkthrough.
+If level is unstated, infer it from the user's vocabulary. Default silently to Work mode and optimize for concise operational understanding. In Learn mode, teach progressively and invite a check for understanding. In Assessment mode, ask the learner to explain first and evaluate only their submitted reasoning; do not provide an answer or answer-equivalent walkthrough.
 
 ## Inspection procedure
 

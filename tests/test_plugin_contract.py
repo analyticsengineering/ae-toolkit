@@ -28,6 +28,7 @@ EXPECTED_COMMANDS = {
     "ae-review-model",
     "ae-review-sql",
     "ae-trace",
+    "ae-validate",
 }
 FREE_COMMANDS = {
     "ae-review-sql",
@@ -39,6 +40,7 @@ FREE_COMMANDS = {
     "ae-learn",
     "ae-build-model",
     "ae-trace",
+    "ae-validate",
 }
 EXPECTED_SKILLS = {
     "analytics-requirements",
@@ -49,10 +51,23 @@ EXPECTED_SKILLS = {
     "data-quality-investigation",
     "dbt-health",
     "explain-data-code",
+    "freshness-investigation",
+    "incremental-model",
+    "bi-model",
+    "metric-definition",
+    "migration-plan",
+    "model-documentation",
+    "model-tests",
     "pr-review",
     "project-profile",
+    "refactor-model",
+    "rename-model",
+    "semantic-layer",
+    "source-setup",
     "sql-review",
     "trace-lineage",
+    "validate-dbt",
+    "yaml-maintenance",
 }
 EXPECTED_AGENTS = {
     "data-quality-investigator",
@@ -106,7 +121,7 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(agents, EXPECTED_AGENTS)
 
     def test_free_commands_are_explicitly_local_only(self) -> None:
-        self.assertEqual(len(FREE_COMMANDS), 9)
+        self.assertEqual(len(FREE_COMMANDS), 10)
         for command in FREE_COMMANDS:
             text = (PLUGIN_ROOT / "commands" / f"{command}.md").read_text(
                 encoding="utf-8"
@@ -114,6 +129,37 @@ class PluginManifestTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn("Never require or call MCP", text)
                 self.assertNotIn("Connected Advanced", text)
+
+    def test_skills_are_naturally_discoverable_and_default_to_work(self) -> None:
+        trigger_terms = {
+            "source-setup": "source",
+            "model-documentation": "documentation",
+            "model-tests": "tests",
+            "refactor-model": "refactor",
+            "rename-model": "rename",
+            "migration-plan": "migration",
+            "incremental-model": "incremental",
+            "metric-definition": "metric",
+            "semantic-layer": "semantic",
+            "bi-model": "bi",
+            "freshness-investigation": "freshness",
+            "yaml-maintenance": "yaml",
+            "validate-dbt": "validate",
+        }
+        for path in sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md")):
+            with self.subTest(skill=path.parent.name):
+                frontmatter = parse_frontmatter(path)
+                description = frontmatter["description"].lower()
+                body = path.read_text(encoding="utf-8")
+                normalized_body = body.replace("*", "").lower()
+                self.assertRegex(description, r"\buse (?:when|for|before)\b")
+                self.assertNotEqual(frontmatter.get("disable-model-invocation"), "true")
+                self.assertIn("silently", normalized_body)
+                self.assertIn("work", normalized_body)
+                self.assertNotIn("operating mode:", normalized_body)
+                expected = trigger_terms.get(path.parent.name)
+                if expected:
+                    self.assertIn(expected, description)
 
     def test_all_component_frontmatter_is_complete_and_consistent(self) -> None:
         component_paths = [

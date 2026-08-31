@@ -21,9 +21,8 @@ Obtain, or explicitly mark missing:
 - Intended business result, output grain, keys, and time semantics.
 - Source schemas, constraints, representative cardinalities, and materialization context.
 - Runtime/query-plan evidence when performance is in scope.
-- Operating mode: **Work**, **Learn**, or **Assessment**.
 
-If mode is unstated, infer from the request and state the inference. In Work mode, prioritize actionable findings. In Learn mode, explain reasoning and use progressive hints; show a solution only after attempts and an explicit request. In Assessment mode, evaluate independently without revealing or constructing the answer.
+Default silently to Work mode and prioritize actionable findings. In Learn mode, explain reasoning and use progressive hints; show a solution only after attempts and an explicit request. In Assessment mode, evaluate independently without revealing or constructing the answer.
 
 ## Inspection procedure
 

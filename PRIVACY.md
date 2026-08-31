@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: August 29, 2026
+Last updated: August 31, 2026
 
 Analytics Engineering Toolkit is local-first. This document separates behavior provided by the plugin from behavior provided by Cursor, a selected model provider, a database client, or the optional AnalyticsEngineering.com MCP service.
 
@@ -16,7 +16,7 @@ Cursor and the user-selected AI/model provider may process prompts and project c
 
 ## Local workflows
 
-The nine free workflows—project profile, build model, trace lineage, SQL review, data profile, data-model review, dbt health, analytics requirements, and explain data code—operate on context made available in the active Cursor session. Their `ae-*` commands never require or call the AnalyticsEngineering.com MCP service.
+The shipped local skills—including project profiling, model/source/test/documentation work, lineage, validation planning, review, profiling, requirements, semantic/BI modeling, refactoring, and investigations—operate on context made available in the active editor session. Their local command aliases never require or call the AnalyticsEngineering.com MCP service.
 
 Depending on the request and Cursor permissions, local context can include:
 
@@ -72,6 +72,8 @@ The plugin should prefer repository metadata, schemas, aggregates, bounded sampl
 
 V1 denies destructive and mutating database statements. Recognized `SELECT` or `EXPLAIN` commands require explicit approval and confirmation of an approved local or development target. Approval to execute a query is separate from approval to send its text or output to the MCP service.
 
+The local dbt validation workflow performs static planning first. It may run one bounded dbt command only after showing the selector, explicit local/development target, and likely side effects and receiving approval. It never infers a target, validates against production, runs globally, or uses `--full-refresh`.
+
 Do not provide production credentials to the plugin. Use least-privilege, read-only, non-production credentials when database access is explicitly needed.
 
 ## Retention and deletion
@@ -85,7 +87,7 @@ For local files and Cursor conversations, use the deletion and retention control
 If the optional endpoint is unavailable, the plugin should:
 
 - clearly state that the connected operation did not occur;
-- keep the nine local workflows usable;
+- keep local workflows usable;
 - preserve local course work;
 - avoid retrying uploads in the background;
 - avoid queueing submissions for later automatic delivery;
