@@ -93,6 +93,13 @@ class ShellSafetyGateTests(unittest.TestCase):
             "ask",
             "a well-formed SELECT that writes is exactly what syntax cannot catch",
         )
+        for shipped in ("hooks/safety_gate.py", "rules/data-safety.mdc"):
+            text = (PLUGIN_ROOT / shipped).read_text(encoding="utf-8")
+            self.assertIn(
+                "syntactic",
+                text,
+                f"{shipped} must say what the gate actually establishes",
+            )
         for document in ("README.md", "SECURITY.md"):
             text = (PLUGIN_ROOT / document).read_text(encoding="utf-8")
             self.assertNotIn(
@@ -100,7 +107,6 @@ class ShellSafetyGateTests(unittest.TestCase):
                 text,
                 f"{document} claims proof the gate cannot supply",
             )
-            self.assertIn("syntactic", text, f"{document} must state what the test is")
 
     def test_removing_single_statement_enforcement_recreates_the_defect(self) -> None:
         attack = "psql -c 'select 1; create table surprise as select 1'"
