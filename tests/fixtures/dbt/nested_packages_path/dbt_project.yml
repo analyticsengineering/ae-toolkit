@@ -1,0 +1,9 @@
+name: nested_packages
+version: 1.0.0
+config-version: 2
+profile: nested_packages
+
+model-paths: ["./models"]
+seed-paths: ["seeds//"]
+target-path: "./build/artifacts"
+packages-install-path: "tooling/vendor"

@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: orders
+    description: Customer orders at one row per order.
+    latest_version: 2
+    config:
+      latest_version_pointer:
+        enabled: true
+        alias: orders_current
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: amount
+        data_tests:
+          - positive_amount
+    versions:
+      - v: 1
+      - v: 2
+
+  - name: customers
+    description: Customers at one row per customer.
+    latest_version: beta
+    versions:
+      - v: 1
+      - v: beta
+        defined_in: customer_rebuild
+
+  - name: dim_products
+    description: Products at one row per product.
+    latest_version: 2
+    config:
+      latest_version_pointer:
+        enabled: false
+    versions:
+      - v: 1
+      - v: 2
+
+  - name: fct_order_summary
+    description: Daily order totals.
+
+  - name: legacy_report
+    description: A report still pinned to the first order version.
+
+  - name: regions
+    description: Region lookup that shares its name with a seed and a snapshot.

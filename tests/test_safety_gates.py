@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from test_support import FIXTURES, load_module, read_json, run_python
+from test_support import FIXTURES, PLUGIN_ROOT, load_module, read_json, run_python
 
 
 safety_gate = load_module("hooks/safety_gate.py", "safety_gate")
@@ -44,6 +44,51 @@ class ShellSafetyGateTests(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertEqual(safety_gate.classify(command)["permission"], "allow")
+
+    def test_the_statement_class_survives_a_harmless_looking_prefix(self) -> None:
+        cases = {
+            "select * from orders": "select",
+            "EXPLAIN SELECT 1": "explain",
+            "explain analyze delete from orders": "delete",
+            "with recent as (select 1) select * from recent": "select",
+            "with recent as (select 1) delete from orders using recent": "delete",
+            "create table t as select 1": "create",
+            "show tables": "show",
+        }
+        for statement, expected in cases.items():
+            with self.subTest(statement=statement):
+                self.assertEqual(safety_gate.sql_statement_class(statement), expected)
+
+    def test_semicolons_only_split_where_the_database_would_split(self) -> None:
+        self.assertEqual(
+            safety_gate.split_sql_statements("select ';' as delimiter"),
+            ["select ';' as delimiter"],
+        )
+        self.assertEqual(safety_gate.split_sql_statements("select 1;"), ["select 1"])
+        self.assertEqual(
+            safety_gate.split_sql_statements("select 1; select 2"),
+            ["select 1", "select 2"],
+        )
+
+    def test_the_allowed_statement_classes_are_exactly_what_the_policy_says(self) -> None:
+        """Policy text and enforcement drift apart unless they are compared."""
+        self.assertEqual(safety_gate.READ_STATEMENTS, {"select", "explain"})
+        for document in ("README.md", "SECURITY.md"):
+            text = (PLUGIN_ROOT / document).read_text(encoding="utf-8")
+            self.assertIn("`SELECT`", text)
+            self.assertIn("`EXPLAIN`", text)
+            self.assertNotIn("`SHOW`", text)
+
+    def test_removing_single_statement_enforcement_recreates_the_defect(self) -> None:
+        attack = "psql -c 'select 1; create table surprise as select 1'"
+        self.assertEqual(safety_gate.classify(attack)["permission"], "deny")
+
+        original = safety_gate.split_sql_statements
+        safety_gate.split_sql_statements = lambda text: [text]
+        try:
+            self.assertEqual(safety_gate.classify(attack)["permission"], "ask")
+        finally:
+            safety_gate.split_sql_statements = original
 
     def test_hook_entry_point_fails_closed_on_malformed_input(self) -> None:
         result = run_python("hooks/safety_gate.py", stdin="{not json")

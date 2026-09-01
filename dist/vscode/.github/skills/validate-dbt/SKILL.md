@@ -30,10 +30,11 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
    - the explicit target and evidence it is local/development;
    - resources and materializations in scope;
    - whether warehouse objects may be created or replaced.
-9. Obtain approval, then run exactly that command. Do not batch a second dbt command into the same shell call. Where the plan lists several warehouse steps, approve and run them one at a time, in order.
-10. Read the resulting artifacts with `python3 ".github/ae-toolkit/scripts/interpret_dbt_results.py" --project-dir <project-root> [--run-results <path>] [--sources <path>] [--log <path>] --pretty`. Passing the project directory lets the interpreter find `run_results.json` and `sources.json` at their configured target path rather than assuming `target/`.
-11. If validation fails, identify the smallest repair. When the request explicitly includes fixing failures, apply reversible project-owned SQL/YAML/test edits without a second approval. Otherwise preview the repair first because validation alone does not authorize edits. Contract changes, renames, deletions, and scope expansion always require preview, blast radius, and approval.
-12. Re-plan after a repair. Never broaden a selector silently. Stop after five execution attempts and report unresolved evidence rather than looping.
+9. Obtain approval, then run exactly that command. Do not batch a second dbt command into the same shell call. Where the plan lists several warehouse steps, approve and run them one at a time, in order. Note the UTC time immediately before each command; the artifact it writes is only evidence if it is newer than that.
+10. Read the resulting artifacts with each step's `verification_command`, or equivalently `python3 ".github/ae-toolkit/scripts/interpret_dbt_results.py" --project-dir <project-root> --expect-operation <step operation> --since <timestamp taken before the command> [--invocation-id <id>] [--log <path>] --pretty`. Naming the operation reads only that operation's artifact, so a leftover `run_results.json` cannot be reported as the outcome of a freshness check.
+11. Treat `verified: false` as unverified, not as failure. It means the artifact could not be tied to the command that just ran, so re-run the step or state that the outcome is unproven. Read `status` using dbt's own vocabulary: `warned` is not a failure, `no_op` is a success, `partial` means inspecting `batches` for which microbatches failed, and `incomplete` means everything skipped.
+12. If validation fails, identify the smallest repair. When the request explicitly includes fixing failures, apply reversible project-owned SQL/YAML/test edits without a second approval. Otherwise preview the repair first because validation alone does not authorize edits. Contract changes, renames, deletions, and scope expansion always require preview, blast radius, and approval.
+13. Re-plan after a repair. Never broaden a selector silently. Stop after five execution attempts and report unresolved evidence rather than looping.
 
 ## Command choice
 

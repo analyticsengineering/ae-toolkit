@@ -12,8 +12,29 @@ from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import artifact_inventory  # noqa: E402
 import inspect_dbt  # noqa: E402
 import redact_secrets  # noqa: E402
+
+
+# dbt's current run-results schema. A status the reader does not know is not a
+# failure; treating `warn`, `no-op`, and `partial success` as failures reported
+# problems that did not happen and hid the two batches that really failed.
+RESULT_STATUS = {
+    "success": "passed",
+    "pass": "passed",
+    "warn": "warned",
+    "no-op": "no_op",
+    "noop": "no_op",
+    "skipped": "skipped",
+    "partial success": "partial",
+    "fail": "failed",
+    "error": "failed",
+    "runtime error": "failed",
+}
+
+# Worst-first, so one failed node decides the overall reading.
+STATUS_PRECEDENCE = ("failed", "partial", "warned", "passed", "no_op", "skipped")
 
 
 def _redact(message: str) -> str:
@@ -21,18 +42,41 @@ def _redact(message: str) -> str:
 
 
 def _category(unique_id: str, message: str) -> str:
+    """Classify a failure by what went wrong, not by what kind of node it was.
+
+    A test node whose message says "permission denied" did not fail its
+    assertion; it never ran. Reading the node type first turned an access
+    problem into a data-quality finding and sent the reader to the wrong place.
+    """
     lowered = message.lower()
-    if unique_id.startswith("test."):
-        return "test-assertion"
     if "compilation error" in lowered or "compile error" in lowered:
         return "compile"
+    if "permission" in lowered or "access denied" in lowered or "not authorized" in lowered:
+        return "permission"
     if "database error" in lowered or "sql error" in lowered:
         return "database"
     if "dependency" in lowered or "package" in lowered:
         return "dependency"
-    if "permission" in lowered or "access denied" in lowered:
-        return "permission"
+    if unique_id.startswith("test."):
+        return "test-assertion"
     return "unknown"
+
+
+def _batch_summary(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Microbatch outcomes, which decide whether a partial run is nearly fine."""
+    batches = result.get("batch_results")
+    if not isinstance(batches, dict):
+        return None
+    successful = batches.get("successful") or []
+    failed = batches.get("failed") or []
+    if not isinstance(successful, list) or not isinstance(failed, list):
+        return None
+    return {
+        "successful": len(successful),
+        "failed": len(failed),
+        "total": len(successful) + len(failed),
+        "failed_batches": [str(item) for item in failed[:20]],
+    }
 
 
 def _lag_seconds(criteria: Any, snapshotted_at: Any, max_loaded_at: Any) -> float | None:
@@ -137,16 +181,72 @@ def interpret_source_freshness(sources: str | Path) -> dict[str, Any]:
     }
 
 
+def _correlate(
+    metadata: dict[str, Any],
+    *,
+    since: str | None,
+    invocation_id: str | None,
+) -> dict[str, Any]:
+    """Decide whether this artifact was written by the command that just ran.
+
+    An interpreter that says "verified" while reading yesterday's
+    `run_results.json` is worse than one that says nothing: it retires a real
+    obligation on the strength of an unrelated file.
+    """
+    generated_at = metadata.get("generated_at")
+    report: dict[str, Any] = {
+        "generated_at": generated_at,
+        "invocation_id": metadata.get("invocation_id"),
+        "correlated": None,
+        "reason": None,
+    }
+    if invocation_id:
+        matched = metadata.get("invocation_id") == invocation_id
+        report["correlated"] = matched
+        report["reason"] = (
+            "The artifact records the expected invocation."
+            if matched
+            else "The artifact was written by a different dbt invocation."
+        )
+        return report
+    if since:
+        boundary = artifact_inventory.parse_moment(since)
+        written = artifact_inventory.parse_moment(generated_at)
+        if boundary is None or written is None:
+            report["correlated"] = False
+            report["reason"] = "The artifact carries no comparable generation time."
+            return report
+        matched = written > boundary
+        report["correlated"] = matched
+        report["reason"] = (
+            "The artifact was written after the command started."
+            if matched
+            else "The artifact predates the command, so it describes an earlier run."
+        )
+        return report
+    report["reason"] = (
+        "No expected invocation or start time was supplied, so the artifact "
+        "cannot be tied to a specific command."
+    )
+    return report
+
+
 def interpret_results(
     run_results: str | Path | None = None,
     *,
     log_text: str | None = None,
     sources: str | Path | None = None,
+    expected_operation: str | None = None,
+    since: str | None = None,
+    invocation_id: str | None = None,
 ) -> dict[str, Any]:
     artifact_present = False
     artifact_valid = False
-    failures: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
     metadata: dict[str, Any] = {}
+    node_statuses: list[str] = []
+    batches: list[dict[str, Any]] = []
+    provenance: dict[str, Any] | None = None
 
     if run_results is not None:
         path = Path(run_results).expanduser().resolve()
@@ -159,54 +259,72 @@ def interpret_results(
             else:
                 artifact_valid = isinstance(document, dict)
                 if artifact_valid:
-                    raw_metadata = document.get("metadata")
-                    if isinstance(raw_metadata, dict):
-                        metadata["dbt_version"] = raw_metadata.get("dbt_version")
-                        metadata["generated_at"] = raw_metadata.get("generated_at")
+                    metadata.update(artifact_inventory.artifact_metadata(document))
+                    provenance = _correlate(
+                        metadata, since=since, invocation_id=invocation_id
+                    )
                     for result in document.get("results", []):
                         if not isinstance(result, dict):
                             continue
-                        status = str(result.get("status") or "unknown")
-                        if status.lower() in {"success", "pass", "skipped"}:
+                        raw_status = str(result.get("status") or "unknown")
+                        reading = RESULT_STATUS.get(raw_status.lower(), "failed")
+                        node_statuses.append(reading)
+                        batch = _batch_summary(result)
+                        if batch:
+                            batches.append(
+                                {"unique_id": str(result.get("unique_id") or ""), **batch}
+                            )
+                        if reading in {"passed", "skipped", "no_op"}:
                             continue
                         unique_id = str(result.get("unique_id") or "unknown")
-                        message = _redact(str(result.get("message") or "No failure message was recorded."))
-                        failures.append(
-                            {
-                                "unique_id": unique_id,
-                                "status": status,
-                                "category": _category(unique_id, message),
-                                "message": message,
-                                "execution_time": result.get("execution_time"),
-                            }
+                        message = _redact(
+                            str(result.get("message") or "No failure message was recorded.")
                         )
+                        entry = {
+                            "unique_id": unique_id,
+                            "status": raw_status,
+                            "reading": reading,
+                            "category": _category(unique_id, message),
+                            "message": message,
+                            "execution_time": result.get("execution_time"),
+                        }
+                        if batch:
+                            entry["batches"] = batch
+                        findings.append(entry)
 
     if log_text:
         redacted = _redact(log_text)
-        if not failures:
+        if not findings:
             match = re.search(
                 r"(?im)^\s*(compilation error|database error|runtime error)\b[:\s-]*(.*)$",
                 redacted,
             )
             if match:
                 message = " ".join(part for part in match.groups() if part).strip()
-                failures.append(
+                findings.append(
                     {
                         "unique_id": "log",
                         "status": "error",
+                        "reading": "failed",
                         "category": _category("", message),
                         "message": message,
                         "execution_time": None,
                     }
                 )
+                node_statuses.append("failed")
 
     freshness = interpret_source_freshness(sources) if sources is not None else None
 
-    status = "failed" if failures else ("passed" if artifact_valid else "unknown")
-    if freshness is not None and freshness["status"] == "failed":
-        status = "failed"
-    elif status == "unknown" and freshness is not None and freshness["status"] in {"passed", "warned"}:
-        status = freshness["status"]
+    status = _overall_status(node_statuses, artifact_valid)
+    mismatch = _provenance_mismatch(run_results, sources, metadata)
+    if freshness is not None and not mismatch:
+        status = _combine_freshness(status, freshness["status"])
+
+    # A warning counted as a failure sends a reader looking for a break that did
+    # not happen, so each reading keeps its own list.
+    failures = [item for item in findings if item["reading"] == "failed"]
+    warnings = [item for item in findings if item["reading"] == "warned"]
+    partial = [item for item in findings if item["reading"] == "partial"]
 
     result: dict[str, Any] = {
         "ok": True,
@@ -218,11 +336,74 @@ def interpret_results(
         },
         "failure_count": len(failures),
         "failures": failures,
+        "warning_count": len(warnings),
+        "warnings": warnings,
         "interpretation_note": "Artifacts and supplied logs only; dbt was not executed.",
     }
+    if partial:
+        result["partial"] = partial
+    if expected_operation:
+        result["expected_operation"] = expected_operation
+        expected_kind = artifact_inventory.OPERATION_ARTIFACTS.get(expected_operation)
+        result["expected_artifact"] = expected_kind
+    if provenance is not None:
+        result["provenance"] = provenance
+    result["verified"] = bool(
+        artifact_valid and provenance is not None and provenance.get("correlated")
+    )
+    if batches:
+        result["batches"] = batches
+    if mismatch:
+        result["provenance_mismatch"] = mismatch
     if freshness is not None:
         result["source_freshness"] = freshness
     return result
+
+
+def _overall_status(readings: Sequence[str], artifact_valid: bool) -> str:
+    if not readings:
+        return "passed" if artifact_valid else "unknown"
+    for candidate in STATUS_PRECEDENCE:
+        if candidate in readings:
+            # A run in which every node was skipped completed nothing, so
+            # calling it "passed" retires an obligation nobody satisfied.
+            return "incomplete" if candidate == "skipped" else candidate
+    return "unknown"
+
+
+def _combine_freshness(status: str, freshness_status: str) -> str:
+    if freshness_status == "failed":
+        return "failed"
+    if status == "unknown" and freshness_status in {"passed", "warned"}:
+        return freshness_status
+    return status
+
+
+def _provenance_mismatch(
+    run_results: str | Path | None,
+    sources: str | Path | None,
+    metadata: dict[str, Any],
+) -> str | None:
+    """Refuse to merge two artifacts that different commands produced."""
+    if run_results is None or sources is None:
+        return None
+    path = Path(sources).expanduser().resolve()
+    if not path.is_file():
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+
+    freshness_metadata = artifact_inventory.artifact_metadata(document)
+    left, right = metadata.get("invocation_id"), freshness_metadata.get("invocation_id")
+    if left and right and left == right:
+        return None
+    return (
+        "run_results.json and sources.json record different dbt invocations "
+        f"({left or 'unknown'} and {right or 'unknown'}), so their outcomes "
+        "describe different commands and are reported separately."
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -234,13 +415,37 @@ def _parser() -> argparse.ArgumentParser:
         help="dbt project directory; artifacts are read from its configured target path",
     )
     parser.add_argument("--log", help="Path to a bounded dbt log excerpt")
+    parser.add_argument(
+        "--expect-operation",
+        choices=sorted(
+            key
+            for key, value in artifact_inventory.OPERATION_ARTIFACTS.items()
+            if value is not None
+        ),
+        help="The validation operation whose artifact should be read",
+    )
+    parser.add_argument(
+        "--since",
+        help="ISO timestamp captured before the command ran; the artifact must be newer",
+    )
+    parser.add_argument(
+        "--invocation-id",
+        help="The dbt invocation ID the artifact must record",
+    )
     parser.add_argument("--pretty", action="store_true", help="Indent JSON output")
     return parser
 
 
-def _artifacts_from_project(project_dir: str) -> tuple[str | None, str | None]:
-    """Resolve artifact paths through the project's configured `target-path`."""
-    import artifact_inventory
+def _artifacts_from_project(
+    project_dir: str,
+    expected_operation: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve artifact paths through the project's configured `target-path`.
+
+    Reading every artifact in the directory is how a failed build from an hour
+    ago got reported as the outcome of a freshness check. When the operation is
+    known, only its artifact is read.
+    """
     import project_context
 
     context = project_context.resolve_project_context(project_dir)
@@ -249,12 +454,17 @@ def _artifacts_from_project(project_dir: str) -> tuple[str | None, str | None]:
             f"No dbt project was resolved at {project_dir}"
         )
     inventory = artifact_inventory.inventory_artifacts(context)
-    run_results = inventory.current.get("run_results")
-    sources = inventory.current.get("sources")
-    return (
-        str(run_results.path) if run_results and run_results.present else None,
-        str(sources.path) if sources and sources.present else None,
-    )
+
+    def located(kind: str) -> str | None:
+        artifact = inventory.current.get(kind)
+        return str(artifact.path) if artifact and artifact.present else None
+
+    if expected_operation:
+        kind = artifact_inventory.OPERATION_ARTIFACTS.get(expected_operation)
+        if kind == "sources":
+            return None, located("sources")
+        return located("run_results"), None
+    return located("run_results"), located("sources")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -273,7 +483,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_results, sources = args.run_results, args.sources
     if args.project_dir:
         try:
-            discovered_results, discovered_sources = _artifacts_from_project(args.project_dir)
+            discovered_results, discovered_sources = _artifacts_from_project(
+                args.project_dir, args.expect_operation
+            )
         except (inspect_dbt.DbtInspectionError, OSError, ValueError) as exc:
             print(
                 json.dumps({"ok": False, "error": str(exc), "error_type": type(exc).__name__}),
@@ -283,7 +495,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_results = run_results or discovered_results
         sources = sources or discovered_sources
 
-    result = interpret_results(run_results, log_text=log_text, sources=sources)
+    result = interpret_results(
+        run_results,
+        log_text=log_text,
+        sources=sources,
+        expected_operation=args.expect_operation,
+        since=args.since,
+        invocation_id=args.invocation_id,
+    )
     print(json.dumps(result, indent=2 if args.pretty else None, sort_keys=args.pretty))
     return 0
 

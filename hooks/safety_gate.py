@@ -26,17 +26,19 @@ DB_CLIENT = re.compile(
     r"hive|impala-shell|usql|dbsqlcli)",
     re.IGNORECASE,
 )
+# `clone` writes nodes into a target schema and `retry` re-executes the previous
+# invocation, so both reach a warehouse exactly as `run` does.
 DBT_EXECUTION = re.compile(
-    r"\bdbt\b[^;&|]*?\b(?:run|build|test|snapshot|seed|run-operation|compile|show|debug)\b"
+    r"\bdbt\b[^;&|]*?\b(?:run|build|test|snapshot|seed|run-operation|compile|show|debug|"
+    r"clone|retry)\b"
     r"|\bdbt\b[^;&|]*?\b(?:docs\s+generate|source\s+freshness)\b",
     re.IGNORECASE,
 )
 DBT_DEPENDENCIES = re.compile(r"\bdbt\b[^;&|]*?\bdeps\b", re.IGNORECASE)
 DBT_FULL_REFRESH = re.compile(
-    r"\bdbt\b[^;&|]*?\b(?:run|build)\b[^;&|]*--full-refresh\b",
+    r"\bdbt\b[^;&|]*?\b(?:run|build|clone)\b[^;&|]*--full-refresh\b",
     re.IGNORECASE,
 )
-DB_READ = re.compile(r"^\s*(?:select|explain|with|show|describe|desc)\b", re.IGNORECASE)
 DB_WRITE = re.compile(
     r"\b(?:insert\s+into|update\s+\S+|delete\s+from|merge\s+into|alter\s+"
     r"(?:table|view|schema|database))\b",
@@ -274,6 +276,158 @@ def _destructive_command(tokens: list[str]) -> str | None:
     return None
 
 
+def strip_sql_comments(text: str) -> str:
+    """Remove SQL comments without losing anything inside a string literal.
+
+    A comment marker is only a comment outside quotes: `select '-- not a comment'`
+    must survive intact, or the statement that reaches the classifier is not the
+    statement the database would run.
+    """
+    out: list[str] = []
+    index, length = 0, len(text)
+    quote: str | None = None
+    while index < length:
+        char = text[index]
+        if quote:
+            out.append(char)
+            if char == quote:
+                # Doubling is the SQL escape for a quote inside a literal.
+                if index + 1 < length and text[index + 1] == quote:
+                    out.append(text[index + 1])
+                    index += 2
+                    continue
+                quote = None
+            index += 1
+            continue
+        if char in "'\"`":
+            quote = char
+            out.append(char)
+            index += 1
+            continue
+        if char == "-" and text.startswith("--", index):
+            end = text.find("\n", index)
+            index = length if end == -1 else end
+            out.append(" ")
+            continue
+        if char == "/" and text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            index = length if end == -1 else end + 2
+            out.append(" ")
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def split_sql_statements(text: str) -> list[str]:
+    """Top-level statements, splitting only on semicolons the database sees.
+
+    Maintaining a denylist of dangerous statements meant every statement nobody
+    listed slipped through. Counting statements instead makes the rule testable:
+    a client invocation carrying more than one statement is never eligible.
+    """
+    cleaned = strip_sql_comments(text)
+    statements: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    depth = 0
+    index, length = 0, len(cleaned)
+    while index < length:
+        char = cleaned[index]
+        if quote:
+            current.append(char)
+            if char == quote:
+                if index + 1 < length and cleaned[index + 1] == quote:
+                    current.append(cleaned[index + 1])
+                    index += 2
+                    continue
+                quote = None
+            index += 1
+            continue
+        if char in "'\"`":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == ";" and depth == 0:
+            statements.append("".join(current))
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    statements.append("".join(current))
+    return [item.strip() for item in statements if item.strip()]
+
+
+WORD = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
+# The only statement classes a database client may be approved to run. Every
+# other class -- including SHOW and DESCRIBE, which the policy text excludes --
+# is denied rather than added to a growing list of exceptions.
+READ_STATEMENTS = {"select", "explain"}
+
+
+def _top_level_words(statement: str) -> list[str]:
+    """Keywords outside any parenthesis, which is where the statement class lives."""
+    words: list[str] = []
+    depth = 0
+    quote: str | None = None
+    index, length = 0, len(statement)
+    while index < length:
+        char = statement[index]
+        if quote:
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in "'\"`":
+            quote = char
+            index += 1
+            continue
+        if char == "(":
+            depth += 1
+            index += 1
+            continue
+        if char == ")":
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        match = WORD.match(statement, index)
+        if match:
+            if depth == 0:
+                words.append(match.group(0).lower())
+            index = match.end()
+            continue
+        index += 1
+    return words
+
+
+def sql_statement_class(statement: str) -> str:
+    """What the database would actually do, not what the first word suggests.
+
+    `WITH ... DELETE` and `EXPLAIN ANALYZE DELETE` both begin with a word that
+    looks harmless and both modify data, so the class is resolved past the
+    prefix rather than read off the front of the string.
+    """
+    words = _top_level_words(statement)
+    if not words:
+        return "unknown"
+    head = words[0]
+    if head == "explain":
+        # EXPLAIN ANALYZE executes the plan, so what follows decides the class.
+        rest = [word for word in words[1:] if word not in {"analyze", "verbose", "format", "json", "text", "yaml", "xml", "costs", "buffers", "on", "off", "true", "false"}]
+        if not rest:
+            return "explain"
+        return "explain" if rest[0] == "select" else rest[0]
+    if head == "with":
+        for word in words[1:]:
+            if word in {"select", "insert", "update", "delete", "merge"}:
+                return "select" if word == "select" else word
+        return "unknown"
+    return head
+
+
 def _db_statements(tokens: list[str]) -> tuple[list[str], bool]:
     """Inline statements handed to a database client, and whether any are opaque.
 
@@ -382,7 +536,13 @@ def classify(command: str) -> dict[str, str]:
         for tokens in executable_segments
         if DB_CLIENT.fullmatch(Path(tokens[0]).name)
     ]
-    database_segments = [shlex.join(tokens) for tokens in database_clients]
+    # The SQL a client was handed, with comments removed. Searching the raw
+    # command line instead denied `select 1 -- ; drop table orders`, which is one
+    # harmless read, on the strength of words the database never executes.
+    client_sql: list[str] = []
+    for tokens in database_clients:
+        supplied, _ = _db_statements(tokens)
+        client_sql.extend(strip_sql_comments(item) for item in supplied)
     direct_sql = bool(
         re.match(
             r"^\s*(?:select|explain|with|insert|update|delete|merge|alter|drop|truncate|"
@@ -391,8 +551,8 @@ def classify(command: str) -> dict[str, str]:
             re.IGNORECASE,
         )
     )
-    governed = " ; ".join([*dbt_segments, *database_segments])
-    database_context = bool(database_segments) or direct_sql
+    governed = " ; ".join([*dbt_segments, *client_sql])
+    database_context = bool(database_clients) or direct_sql
 
     if database_context and DB_DESTRUCTIVE.search(governed or normalized):
         return decision(
@@ -424,8 +584,18 @@ def classify(command: str) -> dict[str, str]:
                 "human review instead of executing a script or interactive session.",
                 "unverifiable-database-command",
             )
-        for statement in statements:
-            if not DB_READ.match(statement.strip()):
+        for supplied in statements:
+            parsed = split_sql_statements(supplied)
+            if len(parsed) != 1:
+                return decision(
+                    "deny",
+                    "Blocked a database client command that carries more than one SQL "
+                    "statement, so the whole invocation cannot be shown to be a read.",
+                    "Send exactly one SELECT or EXPLAIN, or provide the sequence as a "
+                    "reviewed proposal instead of executing it.",
+                    "multi-statement-database-command",
+                )
+            if sql_statement_class(parsed[0]) not in READ_STATEMENTS:
                 return decision(
                     "deny",
                     "Blocked a database statement that is not a read. V1 executes only "
@@ -434,14 +604,16 @@ def classify(command: str) -> dict[str, str]:
                     "non-read-database-statement",
                 )
 
-    if direct_sql and not DB_READ.match(normalized):
-        return decision(
-            "deny",
-            "Blocked a database statement that is not a read. V1 executes only SELECT or "
-            "EXPLAIN against an approved local or development target.",
-            "Provide the statement as a reviewed proposal instead of executing it.",
-            "non-read-database-statement",
-        )
+    if direct_sql:
+        parsed = split_sql_statements(normalized)
+        if len(parsed) != 1 or sql_statement_class(parsed[0]) not in READ_STATEMENTS:
+            return decision(
+                "deny",
+                "Blocked a database statement that is not a single read. V1 executes only "
+                "SELECT or EXPLAIN against an approved local or development target.",
+                "Provide the statement as a reviewed proposal instead of executing it.",
+                "non-read-database-statement",
+            )
 
     if any(DBT_FULL_REFRESH.search(segment) for segment in dbt_segments):
         return decision(

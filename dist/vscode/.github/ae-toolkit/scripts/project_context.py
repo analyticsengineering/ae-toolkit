@@ -18,7 +18,7 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -95,23 +95,44 @@ def parse_yaml_checked(text: str) -> tuple[Any, list[str]]:
 # --- Layout -------------------------------------------------------------------
 
 
+def normalize_relative(value: str) -> str:
+    """Canonicalize a configured path so comparisons can be exact.
+
+    `./models`, `models/`, and `models//./staging` all name real directories,
+    and a prefix comparison against the raw string matches none of them. A path
+    that climbs above the project root is dropped: it cannot describe a
+    directory this project owns.
+    """
+    text = str(value).strip()
+    if not text:
+        return ""
+    parts = [part for part in PurePosixPath(text).parts if part not in ("", ".", "/")]
+    if any(part == ".." for part in parts):
+        return ""
+    return "/".join(parts)
+
+
 def _configured_paths(project: dict[str, Any], key: str) -> tuple[str, ...]:
     value = project.get(key)
     if isinstance(value, list):
-        entries = tuple(str(item).strip("/") for item in value if isinstance(item, str) and str(item).strip())
+        entries = tuple(
+            normalized
+            for item in value
+            if isinstance(item, str) and (normalized := normalize_relative(item))
+        )
         if entries:
             return entries
-    if isinstance(value, str) and value.strip():
-        return (value.strip().strip("/"),)
+    if isinstance(value, str) and normalize_relative(value):
+        return (normalize_relative(value),)
     return DEFAULT_PATHS.get(key, ())
 
 
 def _configured_single(project: dict[str, Any], key: str, default: str) -> str:
     value = project.get(key)
-    if isinstance(value, str) and value.strip():
-        return value.strip().strip("/")
+    if isinstance(value, str) and normalize_relative(value):
+        return normalize_relative(value)
     if isinstance(value, list) and value and isinstance(value[0], str):
-        return value[0].strip().strip("/")
+        return normalize_relative(value[0]) or default
     return default
 
 
@@ -133,8 +154,24 @@ class DbtProjectLayout:
         self.packages_install_path = _configured_single(
             config, "packages-install-path", DEFAULT_PACKAGES_PATH
         )
-        self.vendored_directories = frozenset(
-            {*BASE_VENDORED_DIRECTORIES, self.packages_install_path, self.target_path}
+        # Project-root-relative prefixes, not bare directory names. A team that
+        # sets `packages-install-path: vendor` has not disowned a legitimate
+        # `transform/vendor/` model directory, and a nested
+        # `packages-install-path: tooling/vendor` is one prefix rather than two
+        # names to look for anywhere in a path.
+        self.vendored_prefixes = frozenset(
+            prefix
+            for prefix in {
+                *BASE_VENDORED_DIRECTORIES,
+                self.packages_install_path,
+                self.target_path,
+            }
+            if prefix
+        )
+        flags = config.get("flags")
+        self.flags = flags if isinstance(flags, dict) else {}
+        self.latest_version_pointer_default = bool(
+            self.flags.get("latest_version_pointer_enabled_by_default")
         )
 
     def paths_for(self, kind: str) -> tuple[str, ...]:
@@ -153,11 +190,11 @@ class DbtProjectLayout:
         Longest match wins, because `models` and `models/staging` can both be
         configured and the more specific one is the real owner.
         """
-        candidate = Path(relative).as_posix()
+        candidate = normalize_relative(relative)
         best: tuple[int, str] | None = None
         for kind in ("model", "test", "macro", "snapshot", "seed", "analysis"):
             for configured in self.paths_for(kind):
-                prefix = configured.rstrip("/")
+                prefix = configured
                 if candidate == prefix or candidate.startswith(f"{prefix}/"):
                     if best is None or len(prefix) > best[0]:
                         best = (len(prefix), kind)
@@ -165,7 +202,13 @@ class DbtProjectLayout:
 
     def is_own_code(self, relative: str) -> bool:
         """False for installed packages and build output, which are not this team's."""
-        return not self.vendored_directories.intersection(Path(relative).parts)
+        candidate = normalize_relative(relative)
+        if not candidate:
+            return False
+        return not any(
+            candidate == prefix or candidate.startswith(f"{prefix}/")
+            for prefix in self.vendored_prefixes
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -179,6 +222,7 @@ class DbtProjectLayout:
             "analysis_paths": list(self.analysis_paths),
             "target_path": self.target_path,
             "packages_install_path": self.packages_install_path,
+            "vendored_prefixes": sorted(self.vendored_prefixes),
         }
 
 
@@ -253,6 +297,11 @@ class ProjectContext:
     @property
     def is_dbt_project(self) -> bool:
         return self.dbt_root is not None
+
+    @property
+    def latest_version_pointer_default(self) -> bool:
+        """Whether every versioned model publishes a latest-version pointer view."""
+        return bool(self.layout and self.layout.latest_version_pointer_default)
 
     def relative_to_project(self, git_relative: str) -> str | None:
         """Translate a Git-root-relative path into a project-relative one.
@@ -396,9 +445,16 @@ def _layout_for(root: Path, project_file: Path | None) -> DbtProjectLayout:
     project: dict[str, Any] | None = None
     if project_file is not None and project_file.is_file():
         try:
-            project = inspect_dbt.parse_dbt_project(inspect_dbt._read_text(project_file))
+            text = inspect_dbt._read_text(project_file)
         except OSError:
-            project = None
+            return DbtProjectLayout(root, None)
+        project = inspect_dbt.parse_dbt_project(text)
+        # `parse_dbt_project` reads top-level scalars and lists only, which is
+        # all the path configuration needs. Behaviour flags live one level down,
+        # so the nested reader supplies them.
+        nested, _unsupported = parse_yaml_checked(text)
+        if isinstance(nested, dict) and isinstance(nested.get("flags"), dict):
+            project["flags"] = nested["flags"]
     return DbtProjectLayout(root, project)
 
 

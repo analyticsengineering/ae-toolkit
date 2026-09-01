@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: raw
+    database: raw_db
+    schema: public
+    tables:
+      - name: orders
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after:
+            count: 12
+            period: hour
+        columns:
+          - name: amount
+            data_tests:
+              - positive_amount
+      - name: customers
+      - name: products
+      - name: regions
+      - name: payments

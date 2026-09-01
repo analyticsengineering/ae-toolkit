@@ -392,5 +392,183 @@ class ValidationInterpreterTests(unittest.TestCase):
         self.assertEqual(compiled["failures"][0]["category"], "compile")
 
 
+def _run_results(
+    path: Path,
+    results: list[dict[str, object]],
+    *,
+    generated_at: str = "2026-08-31T12:00:00Z",
+    invocation_id: str = "invocation-a",
+) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "dbt_version": "1.12.0",
+                    "dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json",
+                    "generated_at": generated_at,
+                    "invocation_id": invocation_id,
+                    "invocation_started_at": generated_at,
+                },
+                "results": results,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+class ArtifactProvenanceTests(unittest.TestCase):
+    """An artifact only reports on a command if it came from that command."""
+
+    def test_an_artifact_older_than_the_command_is_not_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _run_results(
+                Path(tmp) / "run_results.json",
+                [{"unique_id": "model.p.fct_orders", "status": "success"}],
+                generated_at="2026-08-31T09:00:00Z",
+            )
+            stale = interpreter.interpret_results(path, since="2026-08-31T10:00:00Z")
+            fresh = interpreter.interpret_results(path, since="2026-08-31T08:00:00Z")
+
+        self.assertFalse(stale["verified"])
+        self.assertIn("predates", stale["provenance"]["reason"])
+        self.assertTrue(fresh["verified"])
+
+    def test_a_different_invocation_is_not_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _run_results(
+                Path(tmp) / "run_results.json",
+                [{"unique_id": "model.p.fct_orders", "status": "success"}],
+                invocation_id="invocation-a",
+            )
+            other = interpreter.interpret_results(path, invocation_id="invocation-b")
+            same = interpreter.interpret_results(path, invocation_id="invocation-a")
+
+        self.assertFalse(other["verified"])
+        self.assertTrue(same["verified"])
+
+    def test_without_a_reference_point_nothing_is_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _run_results(
+                Path(tmp) / "run_results.json",
+                [{"unique_id": "model.p.fct_orders", "status": "success"}],
+            )
+            result = interpreter.interpret_results(path)
+
+        self.assertFalse(result["verified"])
+        self.assertIn("cannot be tied", result["provenance"]["reason"])
+
+    def test_two_artifacts_from_different_commands_are_not_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_results = _run_results(
+                Path(tmp) / "run_results.json",
+                [{"unique_id": "model.p.fct_orders", "status": "error", "message": "boom"}],
+                invocation_id="build-run",
+            )
+            sources = Path(tmp) / "sources.json"
+            sources.write_text(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "invocation_id": "freshness-run",
+                            "generated_at": "2026-08-31T12:30:00Z",
+                        },
+                        "results": [
+                            {"unique_id": "source.p.raw.orders", "status": "pass"}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = interpreter.interpret_results(run_results, sources=sources)
+
+        self.assertIn("provenance_mismatch", result)
+        self.assertIn("different dbt invocations", result["provenance_mismatch"])
+
+    def test_only_the_operations_artifact_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "dbt_project.yml").write_text("name: p\nprofile: p\n", encoding="utf-8")
+            target = root / "target"
+            target.mkdir()
+            _run_results(
+                target / "run_results.json",
+                [{"unique_id": "model.p.fct_orders", "status": "error", "message": "boom"}],
+            )
+            (target / "sources.json").write_text(
+                json.dumps({"metadata": {}, "results": []}), encoding="utf-8"
+            )
+            freshness = interpreter._artifacts_from_project(str(root), "source_freshness")
+            build = interpreter._artifacts_from_project(str(root), "model_validation")
+
+        self.assertIsNone(freshness[0], "a freshness check must not read run_results.json")
+        self.assertIsNotNone(freshness[1])
+        self.assertIsNotNone(build[0])
+        self.assertIsNone(build[1], "a build must not read a leftover sources.json")
+
+
+class ResultSemanticsTests(unittest.TestCase):
+    """dbt's current statuses mean more than pass and fail."""
+
+    def read(self, results: list[dict[str, object]]) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _run_results(Path(tmp) / "run_results.json", results)
+            return interpreter.interpret_results(path)
+
+    def test_a_warning_is_not_a_failure(self) -> None:
+        result = self.read([{"unique_id": "test.p.recent_orders", "status": "warn"}])
+        self.assertEqual(result["status"], "warned")
+        self.assertEqual(result["failure_count"], 0)
+        self.assertEqual(result["warning_count"], 1)
+
+    def test_a_no_op_is_a_success(self) -> None:
+        result = self.read([{"unique_id": "model.p.fct_orders", "status": "no-op"}])
+        self.assertEqual(result["status"], "no_op")
+        self.assertEqual(result["failure_count"], 0)
+
+    def test_a_run_that_only_skipped_did_not_pass(self) -> None:
+        result = self.read([{"unique_id": "model.p.fct_orders", "status": "skipped"}])
+        self.assertEqual(result["status"], "incomplete")
+
+    def test_partial_success_reports_the_batches(self) -> None:
+        result = self.read(
+            [
+                {
+                    "unique_id": "model.p.fct_events",
+                    "status": "partial success",
+                    "message": "2 batches failed",
+                    "batch_results": {
+                        "successful": [[f"b{index}", f"b{index}"] for index in range(22)],
+                        "failed": [["b22", "b22"], ["b23", "b23"]],
+                    },
+                }
+            ]
+        )
+        self.assertEqual(result["status"], "partial")
+        batch = result["batches"][0]
+        self.assertEqual((batch["successful"], batch["failed"], batch["total"]), (22, 2, 24))
+
+    def test_a_failed_node_outranks_a_warning(self) -> None:
+        result = self.read(
+            [
+                {"unique_id": "test.p.a", "status": "warn"},
+                {"unique_id": "model.p.b", "status": "error", "message": "boom"},
+            ]
+        )
+        self.assertEqual(result["status"], "failed")
+
+    def test_a_test_that_could_not_run_is_not_a_failed_assertion(self) -> None:
+        result = self.read(
+            [
+                {
+                    "unique_id": "test.p.unique_orders",
+                    "status": "error",
+                    "message": "Database Error: permission denied for schema analytics",
+                }
+            ]
+        )
+        self.assertEqual(result["failures"][0]["category"], "permission")
+
+
 if __name__ == "__main__":
     unittest.main()

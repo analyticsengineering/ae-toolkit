@@ -1,0 +1,17 @@
+name: analytics
+version: 1.0.0
+config-version: 2
+profile: analytics
+
+flags:
+  latest_version_pointer_enabled_by_default: true
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+models:
+  analytics:
+    +materialized: view

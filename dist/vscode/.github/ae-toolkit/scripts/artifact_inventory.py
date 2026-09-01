@@ -33,6 +33,20 @@ STATE_DIRECTORY_NAMES = ("state", "prod-state", "prod_artifacts")
 # inform a plan but must not be the sole basis for one.
 STALE_AFTER_HOURS = 24.0
 
+# Which artifact proves that a given validation operation actually ran. Reading
+# `run_results.json` after a freshness command reports the previous build.
+OPERATION_ARTIFACTS = {
+    "parse": "manifest",
+    "resolve": None,
+    "source_freshness": "sources",
+    "test": "run_results",
+    "model_validation": "run_results",
+}
+
+
+class ArtifactStateError(ValueError):
+    """Raised when an explicitly named state directory cannot be used."""
+
 
 def _load_json(path: Path) -> tuple[Any, str | None]:
     try:
@@ -41,25 +55,40 @@ def _load_json(path: Path) -> tuple[Any, str | None]:
         return None, str(exc)
 
 
-def _generated_at(document: Any) -> str | None:
-    if not isinstance(document, dict):
+def artifact_metadata(document: Any) -> dict[str, Any]:
+    """The provenance block dbt writes into every artifact."""
+    metadata = document.get("metadata") if isinstance(document, dict) else None
+    if not isinstance(metadata, dict):
+        return {}
+    return {
+        "generated_at": str(metadata["generated_at"]) if metadata.get("generated_at") else None,
+        "invocation_id": str(metadata["invocation_id"])
+        if metadata.get("invocation_id")
+        else None,
+        "invocation_started_at": str(metadata["invocation_started_at"])
+        if metadata.get("invocation_started_at")
+        else None,
+        "schema_version": str(metadata["dbt_schema_version"])
+        if metadata.get("dbt_schema_version")
+        else None,
+        "dbt_version": str(metadata["dbt_version"]) if metadata.get("dbt_version") else None,
+    }
+
+
+def parse_moment(value: str | None) -> datetime | None:
+    if not value:
         return None
-    metadata = document.get("metadata")
-    if isinstance(metadata, dict) and metadata.get("generated_at"):
-        return str(metadata["generated_at"])
-    return None
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def _age_hours(generated_at: str | None) -> float | None:
-    if not generated_at:
+    moment = parse_moment(generated_at)
+    if moment is None:
         return None
-    text = generated_at.replace("Z", "+00:00")
-    try:
-        moment = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
     delta = datetime.now(timezone.utc) - moment
     return round(delta.total_seconds() / 3600.0, 2)
 
@@ -75,11 +104,24 @@ class Artifact:
     error: str | None = None
     generated_at: str | None = None
     age_hours: float | None = None
+    invocation_id: str | None = None
+    invocation_started_at: str | None = None
+    schema_version: str | None = None
+    dbt_version: str | None = None
     document: Any = None
 
     @property
     def stale(self) -> bool:
         return self.age_hours is not None and self.age_hours > STALE_AFTER_HOURS
+
+    @property
+    def trust(self) -> str:
+        """A missing artifact and an old one are different problems."""
+        if not self.present:
+            return "missing"
+        if not self.valid:
+            return "unreadable"
+        return "stale" if self.stale else "current"
 
     def as_dict(self, root: Path | None = None) -> dict[str, Any]:
         location = self.path
@@ -92,6 +134,7 @@ class Artifact:
             "kind": self.kind,
             "path": Path(location).as_posix(),
             "present": self.present,
+            "trust": self.trust,
         }
         if self.present:
             payload.update(
@@ -100,6 +143,10 @@ class Artifact:
                     "generated_at": self.generated_at,
                     "age_hours": self.age_hours,
                     "stale": self.stale,
+                    "invocation_id": self.invocation_id,
+                    "invocation_started_at": self.invocation_started_at,
+                    "schema_version": self.schema_version,
+                    "dbt_version": self.dbt_version,
                 }
             )
         if self.error:
@@ -113,14 +160,18 @@ def read_artifact(kind: str, path: Path, *, keep_document: bool = False) -> Arti
     document, error = _load_json(path)
     if error is not None:
         return Artifact(kind, path, present=True, valid=False, error=error)
-    generated_at = _generated_at(document)
+    metadata = artifact_metadata(document)
     return Artifact(
         kind,
         path,
         present=True,
         valid=True,
-        generated_at=generated_at,
-        age_hours=_age_hours(generated_at),
+        generated_at=metadata.get("generated_at"),
+        age_hours=_age_hours(metadata.get("generated_at")),
+        invocation_id=metadata.get("invocation_id"),
+        invocation_started_at=metadata.get("invocation_started_at"),
+        schema_version=metadata.get("schema_version"),
+        dbt_version=metadata.get("dbt_version"),
         document=document if keep_document else None,
     )
 
@@ -140,6 +191,13 @@ class ArtifactInventory:
         manifest = prior.get("manifest")
         return bool(manifest and manifest.valid)
 
+    @property
+    def state_is_stale(self) -> bool:
+        """Whether prior state is old enough that it may describe a dead graph."""
+        prior = self.prior or {}
+        manifest = prior.get("manifest")
+        return bool(manifest and manifest.valid and manifest.stale)
+
     def manifest_document(self, *, prior: bool = False) -> Any:
         source = (self.prior or {}) if prior else self.current
         artifact = source.get("manifest")
@@ -148,6 +206,14 @@ class ArtifactInventory:
         reloaded = read_artifact("manifest", artifact.path, keep_document=True)
         return reloaded.document if reloaded.valid else None
 
+    def artifact_for(self, operation: str, *, prior: bool = False) -> Artifact | None:
+        """The one artifact that can prove this operation ran."""
+        kind = OPERATION_ARTIFACTS.get(operation)
+        if kind is None:
+            return None
+        source = (self.prior or {}) if prior else self.current
+        return source.get(kind)
+
     def as_dict(self, root: Path | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "target_path": Path(self.target_dir).as_posix() if self.target_dir else None,
@@ -155,6 +221,7 @@ class ArtifactInventory:
                 kind: artifact.as_dict(root) for kind, artifact in sorted(self.current.items())
             },
             "has_prior_state": self.has_prior_state,
+            "state_is_stale": self.state_is_stale,
         }
         if self.state_dir is not None:
             payload["state_path"] = Path(self.state_dir).as_posix()
@@ -167,7 +234,13 @@ class ArtifactInventory:
 
 def _state_directory(root: Path, target_dir: Path | None, explicit: Path | None) -> Path | None:
     if explicit is not None:
-        return explicit if explicit.is_dir() else None
+        # Silently downgrading a typo to "no state" produced a plan that asked
+        # for scope the user had just supplied.
+        if not explicit.exists():
+            raise ArtifactStateError(f"The state path you named does not exist: {explicit}")
+        if not explicit.is_dir():
+            raise ArtifactStateError(f"The state path you named is not a directory: {explicit}")
+        return explicit
     for name in STATE_DIRECTORY_NAMES:
         candidate = root / name
         if candidate.is_dir() and (candidate / "manifest.json").is_file():
@@ -243,10 +316,25 @@ def downstream_from_manifest(document: Any, unique_ids: Iterable[str]) -> list[s
 
 
 def node_names(document: Any, unique_ids: Iterable[str]) -> list[str]:
+    """Selector-ready names for manifest nodes, versions included.
+
+    Returning a bare `fct_revenue` for `model.finance.fct_revenue.v2` produces a
+    selector that resolves to every version, or to nothing.
+    """
     nodes = manifest_nodes(document)
     names: set[str] = set()
     for unique_id in unique_ids:
         node = nodes.get(str(unique_id))
-        if isinstance(node, dict) and node.get("name"):
-            names.add(str(node["name"]))
+        if not isinstance(node, dict) or not node.get("name"):
+            continue
+        name = str(node["name"])
+        version = node.get("version")
+        if version not in (None, "") and not isinstance(version, bool):
+            version_text = (
+                str(int(version))
+                if isinstance(version, float) and version.is_integer()
+                else str(version)
+            )
+            name = f"{name}.v{version_text}"
+        names.add(name)
     return sorted(names)

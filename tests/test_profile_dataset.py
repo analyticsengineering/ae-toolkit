@@ -136,6 +136,48 @@ class ProfileDatasetTests(unittest.TestCase):
             [column["name"] for column in chosen["columns"]], ["customer_id", "region"]
         )
 
+    def test_a_document_of_only_empty_arrays_is_not_one_record(self) -> None:
+        with self.assertRaises(profile_dataset.ProfileError) as raised:
+            profile_dataset.profile_dataset(FIXTURES / "data" / "only_empty_arrays.json")
+        message = str(raised.exception)
+        self.assertIn("customers", message)
+        self.assertIn("orders", message)
+        self.assertIn("--record-path", message)
+
+    def test_blank_csv_lines_are_formatting_not_missing_data(self) -> None:
+        report = profile_dataset.profile_dataset(FIXTURES / "data" / "blank_rows.csv")
+
+        self.assertEqual(report["row_count"], 3)
+        self.assertEqual(report["blank_rows_skipped"], 2)
+        for column in report["columns"]:
+            self.assertEqual(column["missing_count"], 0, column["name"])
+
+    def test_na_is_reported_as_a_category_and_as_a_hypothesis(self) -> None:
+        report = profile_dataset.profile_dataset(
+            FIXTURES / "data" / "legitimate_na_category.csv"
+        )
+        country = {column["name"]: column for column in report["columns"]}["country"]
+
+        self.assertEqual(country["observed"]["cardinality"], 4)
+        self.assertEqual(country["observed"]["non_null_count"], 4)
+        self.assertEqual(country["cardinality"], 3)
+        self.assertEqual(country["missing_count"], 1)
+        self.assertIn("4 observed categories", country["null_interpretation_note"])
+        self.assertIn("3 substantive categories", country["null_interpretation_note"])
+
+    def test_observed_typing_does_not_discard_sentinels(self) -> None:
+        report = profile_dataset.profile_records(
+            [{"code": "1"}, {"code": "2"}, {"code": "NA"}]
+        )
+        code = report["columns"][0]
+
+        self.assertEqual(code["inferred_type"], "integer")
+        self.assertEqual(
+            code["observed"]["inferred_type"],
+            "mixed",
+            "treating NA as missing hid that the column is not uniformly numeric",
+        )
+
     def test_invalid_jsonl_fails_with_actionable_error(self) -> None:
         with self.assertRaises(profile_dataset.ProfileError):
             profile_dataset.load_dataset(

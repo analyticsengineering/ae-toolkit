@@ -25,6 +25,12 @@ ADDED = "added"
 MODIFIED = "modified"
 DELETED = "deleted"
 RENAMED = "renamed"
+COPIED = "copied"
+CONFLICTED = "conflicted"
+
+# Porcelain v1 spells an unmerged path with these two-letter codes. Reasoning
+# over a half-merged file produces a plan for source text that nobody wrote.
+UNMERGED_CODES = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
 
 
 @dataclass(frozen=True)
@@ -38,10 +44,20 @@ class ChangedPath:
     original_git_path: str | None = None
     staged: bool = False
     untracked: bool = False
+    unmerged_code: str | None = None
 
     @property
     def is_removal(self) -> bool:
+        """Whether the path this change came from no longer holds a resource.
+
+        A copy is not a removal: the original file is still there, still built,
+        and still has consumers. Treating `C` as a rename discarded a live model.
+        """
         return self.change_type in {DELETED, RENAMED}
+
+    @property
+    def is_rename(self) -> bool:
+        return self.change_type == RENAMED and bool(self.original_path)
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -53,6 +69,8 @@ class ChangedPath:
             payload["original_path"] = self.original_path
         if self.untracked:
             payload["untracked"] = True
+        if self.unmerged_code:
+            payload["unmerged_code"] = self.unmerged_code
         return payload
 
 
@@ -69,26 +87,41 @@ class GitScope:
     def available(self) -> bool:
         return self.error is None
 
+    @property
+    def conflicts(self) -> list[ChangedPath]:
+        return [change for change in self.changes if change.change_type == CONFLICTED]
+
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "repository_root": str(self.repository_root) if self.repository_root else None,
             "changes": [change.as_dict() for change in self.changes],
             "excluded_changes": list(self.excluded_changes),
         }
+        if self.conflicts:
+            payload["conflicts"] = [change.as_dict() for change in self.conflicts]
         if self.error:
             payload["error"] = self.error
         return payload
 
 
+def unmerged_code(record: dict[str, Any]) -> str | None:
+    code = f"{record.get('index_status') or ''}{record.get('worktree_status') or ''}"
+    return code if code in UNMERGED_CODES else None
+
+
 def _change_type(record: dict[str, Any]) -> str:
     if record.get("untracked"):
         return ADDED
+    if unmerged_code(record):
+        return CONFLICTED
     status = str(record.get("status") or "")
     index_status = str(record.get("index_status") or "")
     worktree_status = str(record.get("worktree_status") or "")
     letters = f"{status[:1]}{index_status}{worktree_status}"
-    if "R" in letters or "C" in letters:
+    if "R" in letters:
         return RENAMED
+    if "C" in letters:
+        return COPIED
     if "D" in letters:
         return DELETED
     if "A" in letters:
@@ -165,15 +198,21 @@ def collect_scope(
             continue
         original_git = record.get("original_path")
         original = context.relative_to_project(str(original_git)) if original_git else None
+        change_type = _change_type(record)
+        if change_type == COPIED:
+            # A copy leaves the original intact, so the source path is evidence
+            # of provenance rather than a resource that needs re-resolving.
+            original, original_git = None, None
         changes.append(
             ChangedPath(
                 path=relative,
-                change_type=_change_type(record),
+                change_type=change_type,
                 git_path=git_path,
                 original_path=original,
                 original_git_path=str(original_git) if original_git else None,
                 staged=bool(record.get("staged")),
                 untracked=bool(record.get("untracked")),
+                unmerged_code=unmerged_code(record),
             )
         )
     return GitScope(root, changes, excluded)

@@ -113,8 +113,8 @@ def _parse_datetime(value: str) -> tuple[str, dt.datetime | dt.date] | None:
     return None
 
 
-def _scalar_type(value: Any) -> str:
-    if _is_missing(value):
+def _scalar_type(value: Any, *, treat_sentinels_as_missing: bool = True) -> str:
+    if _is_null(value) or (treat_sentinels_as_missing and _is_missing(value)):
         return "null"
     if isinstance(value, bool):
         return "boolean"
@@ -143,8 +143,11 @@ def _scalar_type(value: Any) -> str:
     return "string"
 
 
-def _inferred_type(values: Iterable[Any]) -> str:
-    types = {_scalar_type(value) for value in values} - {"null"}
+def _inferred_type(values: Iterable[Any], *, treat_sentinels_as_missing: bool = True) -> str:
+    types = {
+        _scalar_type(value, treat_sentinels_as_missing=treat_sentinels_as_missing)
+        for value in values
+    } - {"null"}
     if not types:
         return "null"
     if types <= {"integer"}:
@@ -279,6 +282,11 @@ def profile_records(
 
     for name in discovered:
         values = [record.get(name) for record in records]
+        # Two readings of the same column. `observed` is what the file contains,
+        # where "NA" is the value Namibia. `sentinel_adjusted` is the hypothesis
+        # that "NA" stands for missing. Only the first is established by the
+        # file, and reporting only the second erased a real category.
+        observed = [value for value in values if not _is_null(value)]
         present = [value for value in values if not _is_missing(value)]
         definite_nulls = sum(1 for value in values if _is_null(value))
         sentinels = Counter(
@@ -288,13 +296,18 @@ def profile_records(
         )
         missing_count = row_count - len(present)
         unique_count = len({_canonical(value) for value in present})
+        observed_unique = len({_canonical(value) for value in observed})
         inferred = _inferred_type(values)
+        observed_type = _inferred_type(values, treat_sentinels_as_missing=False)
         pii = _pii_warnings(name, present)
         is_possible_key = bool(row_count and missing_count == 0 and unique_count == row_count)
         normalized_distinct = {
             _canonical(None if _is_missing(value) else value) for value in values
         }
         is_constant = bool(row_count) and len(normalized_distinct) == 1
+        observed_constant = bool(row_count) and len(
+            {_canonical(None if _is_null(value) else value) for value in values}
+        ) == 1
         if is_possible_key:
             possible_keys.append(name)
         if is_constant:
@@ -317,14 +330,32 @@ def profile_records(
             "possible_key": is_possible_key,
             "constant": is_constant,
             "potential_pii": bool(pii),
+            "observed": {
+                "inferred_type": observed_type,
+                "non_null_count": len(observed),
+                "unique_count": observed_unique,
+                "cardinality": observed_unique,
+                "constant": observed_constant,
+                "possible_key": bool(
+                    row_count
+                    and definite_nulls == 0
+                    and observed_unique == row_count
+                ),
+            },
         }
         if sentinels:
-            column["null_interpretation_note"] = (
-                "Values such as "
-                + ", ".join(sorted(sentinels))
-                + " were counted separately from missing values; confirm whether they "
-                "mean missing in this dataset."
+            observed_key = bool(
+                row_count and definite_nulls == 0 and observed_unique == row_count
             )
+            column["null_interpretation_note"] = (
+                f"{name} has {observed_unique} observed categories, including "
+                + ", ".join(sorted(sentinels))
+                + f". If those stand for missing data it has {unique_count} "
+                f"substantive categories and {_percent(missing_count, row_count)}% "
+                "missingness. The file does not establish which reading is correct."
+            )
+            if observed_key != is_possible_key:
+                column["sentinel_changes_key_candidacy"] = True
 
         if inferred in {"integer", "number"}:
             numbers = [
@@ -439,7 +470,9 @@ def _unique_headers(headers: Sequence[str]) -> tuple[list[str], list[dict[str, A
     return result, normalizations
 
 
-def _records_from_json(value: Any, record_path: str | None) -> list[Any]:
+def _records_from_json(
+    value: Any, record_path: str | None, notes: dict[str, Any]
+) -> list[Any]:
     """Choose the array of records in a JSON document, or refuse to choose.
 
     An API payload commonly carries several arrays: the rows, plus errors,
@@ -469,13 +502,25 @@ def _records_from_json(value: Any, record_path: str | None) -> list[Any]:
         for key, child in value.items()
         if isinstance(child, list) and child and all(isinstance(item, dict) for item in child)
     ]
+    # An empty array is still a named collection. Ignoring it turned
+    # `{"customers": [], "orders": []}` into a one-row profile of the wrapper,
+    # which reports two columns that are really two tables.
+    empty = [key for key, child in value.items() if isinstance(child, list) and not child]
     if len(candidates) == 1:
+        if empty:
+            notes["ignored_empty_arrays"] = sorted(empty)
         return candidates[0][1]
     if len(candidates) > 1:
         described = ", ".join(f"{key} ({len(child)} records)" for key, child in candidates)
         raise ProfileError(
             "This JSON document contains more than one plausible record array "
             f"({described}). Choose one with --record-path."
+        )
+    if len(empty) > 1:
+        raise ProfileError(
+            "This JSON document contains only empty arrays "
+            f"({', '.join(sorted(empty))}), so there is no record array to profile. "
+            "Choose one with --record-path to confirm which collection is intended."
         )
     if isinstance(value.get("records"), list):
         return value["records"]
@@ -489,8 +534,9 @@ def load_dataset(
     encoding: str = "utf-8-sig",
     delimiter: str | None = None,
     record_path: str | None = None,
-) -> tuple[list[dict[str, Any]], list[str], str, list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[str], str, list[dict[str, Any]], dict[str, Any]]:
     """Load a supported dataset without modifying it."""
+    notes: dict[str, Any] = {}
     file_path = Path(path).expanduser()
     if not file_path.is_file():
         raise ProfileError(f"Input file does not exist or is not a file: {file_path}")
@@ -516,10 +562,17 @@ def load_dataset(
                 try:
                     headers, normalizations = _unique_headers(next(reader))
                 except StopIteration:
-                    return [], [], fmt, []
+                    return [], [], fmt, [], notes
                 records = []
+                blank_rows = 0
                 for row_number, row in enumerate(reader, 2):
-                    if not row and not headers:
+                    # A physically blank line is formatting, not a record. Padding
+                    # it to the header width added an all-null row that inflated
+                    # every missingness percentage in the file.
+                    if not row or all(
+                        field is None or str(field).strip() == "" for field in row
+                    ):
+                        blank_rows += 1
                         continue
                     if len(row) > len(headers):
                         raise ProfileError(
@@ -527,7 +580,9 @@ def load_dataset(
                         )
                     padded = row + [None] * (len(headers) - len(row))
                     records.append(dict(zip(headers, padded)))
-                return records, headers, fmt, normalizations
+                if blank_rows:
+                    notes["blank_rows_skipped"] = blank_rows
+                return records, headers, fmt, normalizations, notes
 
         text = file_path.read_text(encoding=encoding)
         if fmt == "jsonl":
@@ -539,12 +594,12 @@ def load_dataset(
                 if not isinstance(value, dict):
                     raise ProfileError(f"JSONL line {line_number} is not an object")
                 records.append(value)
-            return records, [], fmt, []
+            return records, [], fmt, [], notes
 
-        records = _records_from_json(json.loads(text), record_path)
+        records = _records_from_json(json.loads(text), record_path, notes)
         if any(not isinstance(record, dict) for record in records):
             raise ProfileError("JSON records must all be objects")
-        return records, [], fmt, []
+        return records, [], fmt, [], notes
     except UnicodeError as exc:
         raise ProfileError(f"Could not decode input using {encoding}: {exc}") from exc
     except json.JSONDecodeError as exc:
@@ -562,7 +617,7 @@ def profile_dataset(
     record_path: str | None = None,
 ) -> dict[str, Any]:
     """Load and profile a dataset path."""
-    records, columns, fmt, normalizations = load_dataset(
+    records, columns, fmt, normalizations, notes = load_dataset(
         path,
         input_format=input_format,
         encoding=encoding,
@@ -576,6 +631,7 @@ def profile_dataset(
         column_order=columns,
     )
     report["header_normalizations"] = normalizations
+    report.update(notes)
     if record_path:
         report["record_path"] = record_path
     return report
