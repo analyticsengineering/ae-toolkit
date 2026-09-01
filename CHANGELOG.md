@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-31
+
+Nothing was added to the workflow catalog. This release is entirely about the
+deterministic layer underneath it: what the toolkit can read, what identity it
+preserves while reasoning, and what it is willing to claim it proved.
+
 ### Added
 
 - A shared deterministic core resolves the questions every dbt-facing script used to answer for itself. `scripts/project_context.py` establishes the Git root, the active dbt project, and every configured resource path; `scripts/resource_identity.py` gives each resource a type, name, version, language, and dependency list; `scripts/artifact_inventory.py` reads build artifacts from the configured target and prior state; `scripts/git_scope.py` normalizes changes into project-relative records. A monorepo with two projects, a project below the Git root, and a project that renames `models/` were each enough to make the old literal paths wrong.
