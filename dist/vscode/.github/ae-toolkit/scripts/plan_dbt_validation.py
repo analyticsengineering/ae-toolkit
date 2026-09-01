@@ -15,6 +15,7 @@ callers keep working.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -72,6 +73,30 @@ OPERATION_COMPATIBILITY: dict[str, dict[str, str]] = {
 # deterministic recommendation. Freshness and tests are never widened this way.
 MODEL_VERBS = ("compile", "run", "build")
 
+# What running a verb actually proves about the change, as opposed to what it
+# proves about the artifact. `dbt test` against an edited model tests whatever
+# relation is already in the warehouse; it never executes the new SQL. Reporting
+# a green test run as "verified" retires an obligation nobody satisfied.
+VERB_EVIDENCE: dict[str, tuple[str, ...]] = {
+    "compile": ("compilation",),
+    "run": ("transformation",),
+    "test": ("tests",),
+    "build": ("transformation", "tests"),
+    "snapshot": ("transformation",),
+    "source freshness": ("freshness",),
+    "source_freshness": ("freshness",),
+}
+
+# The evidence each kind of change owes before it can be called validated.
+EVIDENCE_ORDER = ("compilation", "transformation", "tests", "freshness")
+
+EVIDENCE_DESCRIPTIONS = {
+    "compilation": "the changed code compiles",
+    "transformation": "the changed model implementation was executed",
+    "tests": "the tests for the changed resources were executed",
+    "freshness": "the changed source freshness contracts were checked",
+}
+
 # Ordering used only to derive the single legacy `intent` number and to decide
 # whether a request is broader than the evidence. It never selects a command.
 INTENT_BREADTH = {
@@ -101,22 +126,71 @@ class ValidationPlanError(ValueError):
 # --- YAML change classification ----------------------------------------------
 
 
-def _document_models(document: Any) -> list[str]:
+def _model_ref(name: str, version: str | None = None) -> resource_identity.ResourceRef:
+    return resource_identity.ResourceRef(resource_identity.MODEL, name, version=version)
+
+
+def _sorted_refs(
+    refs: Iterable[resource_identity.ResourceRef],
+) -> list[resource_identity.ResourceRef]:
+    unique = {ref.key: ref for ref in refs}
+    return sorted(unique.values(), key=lambda ref: (ref.name, ref.version or ""))
+
+
+def _model_version_entries(entry: dict[str, Any]) -> dict[str | None, Any]:
+    """Split one `models:` entry into the identities it actually declares.
+
+    A versioned model is several relations sharing one YAML block. Diffing the
+    block as a unit turns an edit to `orders.v1` into an obligation on every
+    version, which is the opposite of the smallest affected scope.
+    """
+    versions = entry.get("versions")
+    if not isinstance(versions, list) or not versions:
+        return {None: entry}
+    shared = {key: value for key, value in entry.items() if key != "versions"}
+    split: dict[str | None, Any] = {}
+    for item in versions:
+        if not isinstance(item, dict):
+            continue
+        version = resource_identity.version_text(item.get("v"))
+        if version is None:
+            continue
+        split[version] = {"shared": shared, "version": item}
+    return split or {None: entry}
+
+
+def _document_model_refs(document: Any) -> list[resource_identity.ResourceRef]:
     models = document.get("models") if isinstance(document, dict) else None
     if not isinstance(models, list):
         return []
-    return sorted(
-        {str(model["name"]) for model in models if isinstance(model, dict) and model.get("name")}
-    )
+    refs: list[resource_identity.ResourceRef] = []
+    for model in models:
+        if not isinstance(model, dict) or not model.get("name"):
+            continue
+        name = str(model["name"])
+        refs.extend(_model_ref(name, version) for version in _model_version_entries(model))
+    return _sorted_refs(refs)
 
 
-def _unit_test_models(document: Any) -> list[str]:
+def _document_models(document: Any) -> list[str]:
+    return sorted({ref.name for ref in _document_model_refs(document)})
+
+
+def _unit_test_model_refs(document: Any) -> list[resource_identity.ResourceRef]:
     unit_tests = document.get("unit_tests") if isinstance(document, dict) else None
     if not isinstance(unit_tests, list):
         return []
-    return sorted(
-        {str(test["model"]) for test in unit_tests if isinstance(test, dict) and test.get("model")}
-    )
+    refs: list[resource_identity.ResourceRef] = []
+    for test in unit_tests:
+        if not isinstance(test, dict) or not test.get("model"):
+            continue
+        version = resource_identity.version_text(test.get("version"))
+        refs.append(_model_ref(str(test["model"]), version))
+    return _sorted_refs(refs)
+
+
+def _unit_test_models(document: Any) -> list[str]:
+    return sorted({ref.name for ref in _unit_test_model_refs(document)})
 
 
 def _document_sources(document: Any) -> list[dict[str, str]]:
@@ -295,14 +369,21 @@ class YamlDelta:
     """One resource-level change found inside a YAML document."""
 
     kind: str
-    models: list[str] = field(default_factory=list)
+    models: list[resource_identity.ResourceRef] = field(default_factory=list)
     sources: list[dict[str, str]] = field(default_factory=list)
     semantic: list[dict[str, str]] = field(default_factory=list)
 
+    @property
+    def model_names(self) -> list[str]:
+        """The bare names, for output only. Planning uses the refs."""
+        return sorted({ref.name for ref in self.models})
+
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"kind": self.kind}
+        if self.models:
+            payload["models"] = [ref.selector() for ref in self.models]
+            payload["model_identities"] = [ref.as_dict() for ref in self.models]
         for key, value in (
-            ("models", self.models),
             ("sources", self.sources),
             ("semantic", self.semantic),
         ):
@@ -314,7 +395,7 @@ class YamlDelta:
 @dataclass
 class YamlChange:
     deltas: list[YamlDelta] = field(default_factory=list)
-    models: list[str] = field(default_factory=list)
+    models: list[resource_identity.ResourceRef] = field(default_factory=list)
     semantic: list[dict[str, str]] = field(default_factory=list)
     sources: list[dict[str, str]] = field(default_factory=list)
     unsupported: list[str] = field(default_factory=list)
@@ -346,21 +427,34 @@ def _model_section_kind(before: dict[str, Any], current: dict[str, Any]) -> str 
     return "contract"
 
 
-def _changed_model_names(before: dict[str, Any], current: dict[str, Any]) -> list[str]:
-    def by_name(document: dict[str, Any]) -> dict[str, Any]:
+def _changed_model_refs(
+    before: dict[str, Any], current: dict[str, Any]
+) -> list[resource_identity.ResourceRef]:
+    """Which model identities the diff touched, one version at a time."""
+
+    def by_identity(document: dict[str, Any]) -> dict[tuple[str, str | None], Any]:
         models = document.get("models")
         if not isinstance(models, list):
             return {}
-        return {
-            str(entry["name"]): entry
-            for entry in models
-            if isinstance(entry, dict) and entry.get("name")
-        }
+        indexed: dict[tuple[str, str | None], Any] = {}
+        for entry in models:
+            if not isinstance(entry, dict) or not entry.get("name"):
+                continue
+            name = str(entry["name"])
+            for version, payload in _model_version_entries(entry).items():
+                indexed[(name, version)] = payload
+        return indexed
 
-    old, new = by_name(before), by_name(current)
-    return sorted(
-        name for name in set(old) | set(new) if old.get(name) != new.get(name)
+    old, new = by_identity(before), by_identity(current)
+    return _sorted_refs(
+        _model_ref(name, version)
+        for name, version in set(old) | set(new)
+        if old.get((name, version)) != new.get((name, version))
     )
+
+
+def _changed_model_names(before: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    return sorted({ref.name for ref in _changed_model_refs(before, current)})
 
 
 def _removed_source_resources(
@@ -383,14 +477,14 @@ def _yaml_deltas(before: dict[str, Any], current: dict[str, Any]) -> list[YamlDe
         {"models": current.get("models")} if current.get("models") else {},
     )
     if model_kind is not None:
-        deltas.append(YamlDelta(model_kind, models=_changed_model_names(before, current)))
+        deltas.append(YamlDelta(model_kind, models=_changed_model_refs(before, current)))
 
     if before.get("unit_tests") != current.get("unit_tests"):
         deltas.append(
             YamlDelta(
                 "test_only",
-                models=sorted(
-                    set([*_unit_test_models(before), *_unit_test_models(current)])
+                models=_sorted_refs(
+                    [*_unit_test_model_refs(before), *_unit_test_model_refs(current)]
                 ),
             )
         )
@@ -446,7 +540,7 @@ def _yaml_change(
         if text is None:
             return YamlChange([YamlDelta("rename_or_delete")])
         before, unsupported = _parse_yaml_text(text)
-        removed_models = _document_models(before)
+        removed_models = _document_model_refs(before)
         return YamlChange(
             [
                 YamlDelta(
@@ -464,7 +558,9 @@ def _yaml_change(
 
     current_text = path.read_text(encoding="utf-8", errors="replace")
     current, unsupported = _parse_yaml_text(current_text)
-    document_models = sorted(set([*_document_models(current), *_unit_test_models(current)]))
+    document_models = _sorted_refs(
+        [*_document_model_refs(current), *_unit_test_model_refs(current)]
+    )
     semantic = _semantic_resources(current)
     sources = _document_sources(current)
     if unsupported:
@@ -541,32 +637,53 @@ class ChangeSet:
         self.test_selectors.setdefault(selector, reason)
 
 
+def _sorted_resources(
+    resources: Iterable[resource_identity.Resource],
+) -> list[resource_identity.Resource]:
+    unique = {resource.key: resource for resource in resources}
+    return sorted(unique.values(), key=lambda item: item.selector())
+
+
 def _source_consumers(
     index: resource_identity.ResourceIndex,
     resources: Sequence[dict[str, str]],
-) -> set[str]:
+) -> list[resource_identity.Resource]:
+    """The models that read these sources, kept as identities.
+
+    Returning bare names here collapsed `orders.v1` -- possibly the only version
+    that reads the source -- into `orders`, which selects every version.
+    """
     refs = [
         resource_identity.ResourceRef(
             resource_identity.SOURCE, item["table"], source_name=item["source"]
         )
         for item in resources
     ]
-    return {
-        resource.name
+    return _sorted_resources(
+        resource
         for resource in index.consumers_of(refs)
         if resource.resource_type == resource_identity.MODEL
-    }
+    )
+
+
+def _downstream_models(
+    index: resource_identity.ResourceIndex,
+    refs: Iterable[resource_identity.ResourceRef],
+) -> list[resource_identity.Resource]:
+    return _sorted_resources(
+        resource
+        for resource in index.downstream_of(list(refs))
+        if resource.resource_type == resource_identity.MODEL
+    )
 
 
 def _downstream_model_names(
     index: resource_identity.ResourceIndex,
     names: Iterable[str],
 ) -> set[str]:
-    refs = [resource_identity.ResourceRef(resource_identity.MODEL, name) for name in names]
     return {
         resource.name
-        for resource in index.downstream_of(refs)
-        if resource.resource_type == resource_identity.MODEL
+        for resource in _downstream_models(index, [_model_ref(name) for name in names])
     }
 
 
@@ -634,14 +751,12 @@ def _gone_model_downstream(
 def _surviving_references(
     index: resource_identity.ResourceIndex,
     resource: resource_identity.Resource,
-) -> list[str]:
+) -> list[resource_identity.Resource]:
     """Resources still pointing at an identity that has been renamed away."""
-    return sorted(
-        {
-            item.name
-            for item in index.resources
-            if any(resource.matches_ref(ref) for ref in item.refs)
-        }
+    return _sorted_resources(
+        item
+        for item in index.resources
+        if any(resource.matches_ref(ref) for ref in item.refs)
     )
 
 
@@ -671,6 +786,27 @@ def _note_ambiguity(
     return path_selector
 
 
+def _ref_selector(
+    index: resource_identity.ResourceIndex,
+    changes: ChangeSet,
+    ref: resource_identity.ResourceRef,
+) -> str:
+    """Render a declared identity as the narrowest selector that addresses it."""
+    match = next(
+        (
+            resource
+            for resource in index.resources
+            if resource.resource_type == ref.resource_type
+            and resource.name == ref.name
+            and resource.version == ref.version
+        ),
+        None,
+    )
+    if match is not None:
+        return _note_ambiguity(index, changes, match)
+    return ref.selector()
+
+
 def _plan_rename(
     context: project_context.ProjectContext,
     index: resource_identity.ResourceIndex,
@@ -694,8 +830,12 @@ def _plan_rename(
     changes.want_build(_note_ambiguity(index, changes, new), display=new.selector())
     for name in consumers:
         changes.want_build(name)
-    for name in surviving:
-        changes.want_build(name, downstream=True)
+    for resource in surviving:
+        changes.want_build(
+            _note_ambiguity(index, changes, resource),
+            display=resource.selector(),
+            downstream=True,
+        )
 
     changes.renames.append(
         {
@@ -704,7 +844,8 @@ def _plan_rename(
             "consumers": consumers,
             "consumer_evidence": evidence,
             "consumer_confidence": confidence,
-            "surviving_references": surviving,
+            "surviving_references": [item.selector() for item in surviving],
+            "surviving_identities": [item.as_dict() for item in surviving],
         }
     )
 
@@ -745,27 +886,33 @@ def _apply_yaml_delta(
 ) -> None:
     """Turn one resource-level YAML change into its own obligations."""
     consumers = _source_consumers(index, delta.sources)
-    changes.models.update(consumers)
+    changes.models.update(resource.selector() for resource in consumers)
+
+    def build_consumers() -> None:
+        for resource in consumers:
+            changes.want_build(
+                _note_ambiguity(index, changes, resource),
+                display=resource.selector(),
+                downstream=True,
+            )
 
     if delta.kind in {"contract", "rename_or_delete"}:
-        for name in delta.models:
-            changes.want_build(name, downstream=True)
-        for name in consumers:
-            changes.want_build(name, downstream=True)
+        for ref in delta.models:
+            changes.want_build(_ref_selector(index, changes, ref), downstream=True)
+        build_consumers()
         return
     if delta.kind == "source_removal":
         changes.source_removals.append(
             {
                 "sources": delta.sources,
-                "surviving_consumers": sorted(consumers),
+                "surviving_consumers": [item.selector() for item in consumers],
+                "surviving_identities": [item.as_dict() for item in consumers],
             }
         )
-        for name in consumers:
-            changes.want_build(name, downstream=True)
+        build_consumers()
         return
     if delta.kind == "source_contract":
-        for name in consumers:
-            changes.want_build(name, downstream=True)
+        build_consumers()
         return
     if delta.kind == "source_freshness":
         changes.freshness_sources.extend(delta.sources)
@@ -776,9 +923,74 @@ def _apply_yaml_delta(
                 f"source:{source['source']}.{source['table']}",
                 "Source test declarations changed.",
             )
-        for name in delta.models:
-            changes.want_test(name, "Test declarations changed.")
+        for ref in delta.models:
+            changes.want_test(
+                _ref_selector(index, changes, ref), "Test declarations changed."
+            )
         return
+
+
+def _plan_function_change(
+    context: project_context.ProjectContext,
+    index: resource_identity.ResourceIndex,
+    changes: ChangeSet,
+    change: git_scope.ChangedPath,
+) -> None:
+    """A function is an addressable resource; its callers usually are not.
+
+    dbt selects functions by name, so validating the definition is bounded. Who
+    calls it is a different question: a function reached through arbitrary SQL
+    text leaves no ref edge, so a rename or deletion has to say the blast radius
+    is unprovable rather than imply the change was contained.
+    """
+    relative = change.path
+    resource = index.by_path(relative) or resource_identity.Resource(
+        resource_identity.FUNCTION,
+        Path(relative).stem,
+        path=relative,
+        package=context.layout.name if context.layout else None,
+        language=resource_identity.FUNCTION_SUFFIXES.get(Path(relative).suffix.lower()),
+    )
+
+    if change.is_removal:
+        gone = (
+            _gone_function_identity(context, index, str(change.original_path))
+            if change.is_rename and change.original_path
+            else resource
+        )
+        changes.models.add(gone.selector())
+        changes.unresolvable_deletions.append(
+            {
+                "resource_type": "function",
+                "name": gone.selector(),
+                "path": gone.path or relative,
+                "reason": (
+                    "A function can be called from arbitrary SQL, which leaves no "
+                    "dependency edge to follow, so the callers of a renamed or "
+                    "deleted function cannot be resolved from the repository."
+                ),
+            }
+        )
+        if not change.is_rename:
+            return
+
+    changes.want_build(
+        _note_ambiguity(index, changes, resource), display=resource.selector()
+    )
+
+
+def _gone_function_identity(
+    context: project_context.ProjectContext,
+    index: resource_identity.ResourceIndex,
+    relative: str,
+) -> resource_identity.Resource:
+    return index.by_path(relative) or resource_identity.Resource(
+        resource_identity.FUNCTION,
+        Path(relative).stem,
+        path=relative,
+        package=context.layout.name if context.layout else None,
+        language=resource_identity.FUNCTION_SUFFIXES.get(Path(relative).suffix.lower()),
+    )
 
 
 def _plan_macro_change(
@@ -892,6 +1104,10 @@ def classify_changes(
                         )
             continue
 
+        if kind == "function" and suffix in resource_identity.FUNCTION_SUFFIXES:
+            _plan_function_change(context, index, changes, change)
+            continue
+
         if kind == "macro" and suffix == ".sql":
             _plan_macro_change(context, index, changes, change)
             continue
@@ -923,7 +1139,7 @@ def classify_changes(
             if yaml_change.unsupported:
                 changes.unsupported_yaml[relative] = yaml_change.unsupported
                 changes.unresolved_dependency_changes.add(relative)
-            changes.models.update(yaml_change.models)
+            changes.models.update(ref.selector() for ref in yaml_change.models)
             changes.semantic_resources.extend(yaml_change.semantic)
             changes.source_resources.extend(yaml_change.sources)
             for delta in yaml_change.deltas:
@@ -967,6 +1183,15 @@ class ValidationStep:
     blocked_reason: str | None = None
     command: str | None = None
     verification_command: str | None = None
+    log_path: str | None = None
+
+    @property
+    def provides_evidence(self) -> list[str]:
+        # `dbt parse` builds the graph; it does not compile a model's SQL, so
+        # it is not evidence about the change itself.
+        if not self.executes_warehouse:
+            return []
+        return list(VERB_EVIDENCE.get(self.intent, ()))
 
     def as_dict(self, order: int) -> dict[str, Any]:
         payload = {
@@ -982,6 +1207,8 @@ class ValidationStep:
             "confidence": self.confidence,
             "expected_artifact": artifact_inventory.OPERATION_ARTIFACTS.get(self.operation),
             "verification_command": self.verification_command,
+            "log_path": self.log_path,
+            "provides_evidence": self.provides_evidence,
         }
         if self.blocked_reason:
             payload["blocked_reason"] = self.blocked_reason
@@ -990,6 +1217,17 @@ class ValidationStep:
 
 def _command(*parts: str) -> str:
     return shlex.join(parts)
+
+
+def _step_log_path(step: "ValidationStep", root: str) -> str:
+    """A private log directory per step, stable across re-planning.
+
+    A shared log directory would let one step's verifier read another step's
+    invocation ID, which is the failure this whole mechanism exists to prevent.
+    """
+    seed = "|".join([step.operation, *sorted(step.selectors)]).encode("utf-8")
+    token = hashlib.sha256(seed).hexdigest()[:12]
+    return (Path(root) / "logs" / "ae-validation" / f"{step.operation}-{token}").as_posix()
 
 
 def model_display_selectors(
@@ -1014,6 +1252,25 @@ def operation_verb(operation: str, requested_intent: str) -> str | None:
     operation's selectors to a command that cannot execute them.
     """
     return OPERATION_COMPATIBILITY.get(operation, {}).get(requested_intent)
+
+
+def _ordered_evidence(kinds: Iterable[str]) -> list[str]:
+    found = set(kinds)
+    return [kind for kind in EVIDENCE_ORDER if kind in found]
+
+
+def required_evidence(changes: ChangeSet, build_models: dict[str, bool]) -> list[str]:
+    """What this change set owes, independent of what the user asked to run."""
+    owed: set[str] = set()
+    if changes.freshness_sources:
+        owed.add("freshness")
+    if changes.test_selectors:
+        owed.add("tests")
+    if build_models:
+        # A changed model implementation is only validated once it has actually
+        # run and its tests have run against the result.
+        owed.update(("transformation", "tests"))
+    return _ordered_evidence(owed)
 
 
 def build_obligations(
@@ -1198,6 +1455,11 @@ def build_steps(
         if not step.executes_warehouse:
             continue
         verb = operation_verb(step.operation, requested_intent) or step.intent
+        # dbt chooses its own invocation ID and documents no way to set one, so
+        # the run writes a JSON log the verifier can read the ID back out of.
+        # Without it, "verified" rests on a timestamp comparison that a second
+        # concurrent run defeats.
+        step.log_path = _step_log_path(step, root)
         step.command = _command(
             "dbt",
             *verb.split(),
@@ -1206,6 +1468,10 @@ def build_steps(
             "--select",
             *step.selectors,
             *(("--target", str(target)) if target else ()),
+            "--log-format-file",
+            "json",
+            "--log-path",
+            step.log_path,
         )
         # The result of a command is only evidence if it can be tied back to
         # the command. Naming the operation keeps a freshness step from being
@@ -1217,6 +1483,8 @@ def build_steps(
             root,
             "--expect-operation",
             step.operation,
+            "--invocation-log",
+            step.log_path,
             "--since",
             "<timestamp captured before the command ran>",
         )
@@ -1451,6 +1719,28 @@ def plan_validation(
     if context.discovery_note:
         warnings.append(context.discovery_note)
 
+    # Proving an artifact came from the command that just ran says nothing about
+    # whether the command could satisfy the change. `dbt test` on an edited model
+    # tests the relation already in the warehouse.
+    owed = required_evidence(changes, build_models)
+    satisfied = _ordered_evidence(
+        kind for step in steps for kind in step.provides_evidence if step.executes_warehouse
+    )
+    unsatisfied = [kind for kind in owed if kind not in set(satisfied)]
+    if not owed:
+        change_verification_status = "nothing_to_verify"
+    elif not unsatisfied:
+        change_verification_status = "fully_covered"
+    elif set(satisfied) & set(owed):
+        change_verification_status = "partially_covered"
+    else:
+        change_verification_status = "not_covered"
+    for kind in unsatisfied:
+        warnings.append(
+            f"The plan does not establish that {EVIDENCE_DESCRIPTIONS[kind]}; "
+            f"that obligation remains open after these commands succeed."
+        )
+
     commands = [step.as_dict(order) for order, step in enumerate(steps, start=1)]
     for command in commands:
         command.pop("operation", None)
@@ -1498,6 +1788,10 @@ def plan_validation(
         "recommended_intent": natural_intent,
         "recommendation_reason": _recommendation_reason(changes, natural_intent, explicit),
         "broader_intent_requires_override": over_validation and not allow_broader_intent,
+        "required_evidence": owed,
+        "satisfied_evidence": satisfied,
+        "unsatisfied_evidence": unsatisfied,
+        "change_verification_status": change_verification_status,
         "validation_steps": [step.as_dict(order) for order, step in enumerate(steps, start=1)],
         "commands": commands,
         "state": inventory.as_dict(context.dbt_root),

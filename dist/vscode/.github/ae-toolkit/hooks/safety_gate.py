@@ -365,6 +365,12 @@ WORD = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
 # The only statement classes a database client may be approved to run. Every
 # other class -- including SHOW and DESCRIBE, which the policy text excludes --
 # is denied rather than added to a growing list of exceptions.
+#
+# This is a syntactic test, and the gate claims no more than that. A single
+# SELECT is eligible for approval; it is not proof of no side effect, because
+# `select drop_everything()` is a syntactically perfect query and only the
+# warehouse knows what the function does. The human approving the command is
+# the control for semantics.
 READ_STATEMENTS = {"select", "explain"}
 
 
@@ -419,13 +425,20 @@ def sql_statement_class(statement: str) -> str:
         rest = [word for word in words[1:] if word not in {"analyze", "verbose", "format", "json", "text", "yaml", "xml", "costs", "buffers", "on", "off", "true", "false"}]
         if not rest:
             return "explain"
-        return "explain" if rest[0] == "select" else rest[0]
-    if head == "with":
+        resolved = "explain" if rest[0] == "select" else rest[0]
+    elif head == "with":
+        resolved = "unknown"
         for word in words[1:]:
             if word in {"select", "insert", "update", "delete", "merge"}:
-                return "select" if word == "select" else word
-        return "unknown"
-    return head
+                resolved = "select" if word == "select" else word
+                break
+    else:
+        resolved = head
+    if resolved in {"select", "explain"} and "into" in words:
+        # SELECT ... INTO creates a table on Postgres and T-SQL, and writes a
+        # file on MySQL. It reads like a query and behaves like a write.
+        return "select-into"
+    return resolved
 
 
 def _db_statements(tokens: list[str]) -> tuple[list[str], bool]:

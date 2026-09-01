@@ -30,11 +30,12 @@ Close the loop from static evidence to a bounded, approved dbt result. Default s
    - the explicit target and evidence it is local/development;
    - resources and materializations in scope;
    - whether warehouse objects may be created or replaced.
-9. Obtain approval, then run exactly that command. Do not batch a second dbt command into the same shell call. Where the plan lists several warehouse steps, approve and run them one at a time, in order. Note the UTC time immediately before each command; the artifact it writes is only evidence if it is newer than that.
-10. Read the resulting artifacts with each step's `verification_command`, or equivalently `python3 ".github/ae-toolkit/scripts/interpret_dbt_results.py" --project-dir <project-root> --expect-operation <step operation> --since <timestamp taken before the command> [--invocation-id <id>] [--log <path>] --pretty`. Naming the operation reads only that operation's artifact, so a leftover `run_results.json` cannot be reported as the outcome of a freshness check.
+9. Obtain approval, then run exactly that command, including its `--log-format-file json --log-path` arguments. Do not batch a second dbt command into the same shell call. Where the plan lists several warehouse steps, approve and run them one at a time, in order. Note the UTC time immediately before each command; the artifact it writes is only evidence if it is newer than that.
+10. Read the resulting artifacts with each step's `verification_command`, or equivalently `python3 ".github/ae-toolkit/scripts/interpret_dbt_results.py" --project-dir <project-root> --expect-operation <step operation> --invocation-log <step log_path> --since <timestamp taken before the command> [--log <path>] --pretty`. Naming the operation reads only that operation's artifact, so a leftover `run_results.json` cannot be reported as the outcome of a freshness check. dbt chooses its own invocation ID, so the step's JSON log is how that ID is recovered; the timestamp is only a fallback.
 11. Treat `verified: false` as unverified, not as failure. It means the artifact could not be tied to the command that just ran, so re-run the step or state that the outcome is unproven. Read `status` using dbt's own vocabulary: `warned` is not a failure, `no_op` is a success, `partial` means inspecting `batches` for which microbatches failed, and `incomplete` means everything skipped.
-12. If validation fails, identify the smallest repair. When the request explicitly includes fixing failures, apply reversible project-owned SQL/YAML/test edits without a second approval. Otherwise preview the repair first because validation alone does not authorize edits. Contract changes, renames, deletions, and scope expansion always require preview, blast radius, and approval.
-13. Re-plan after a repair. Never broaden a selector silently. Stop after five execution attempts and report unresolved evidence rather than looping.
+12. Read `required_evidence`, `satisfied_evidence`, and `unsatisfied_evidence` before reporting success. `artifact_verified` proves the result came from the command that just ran; it does not prove the change was validated. Honor a narrower request — `--intent test` runs the tests — but say plainly what remains open: tests passing against the relation already in the warehouse do not establish that the edited model executes.
+13. If validation fails, identify the smallest repair. When the request explicitly includes fixing failures, apply reversible project-owned SQL/YAML/test edits without a second approval. Otherwise preview the repair first because validation alone does not authorize edits. Contract changes, renames, deletions, and scope expansion always require preview, blast radius, and approval.
+14. Re-plan after a repair. Never broaden a selector silently. Stop after five execution attempts and report unresolved evidence rather than looping.
 
 ## Command choice
 
@@ -56,7 +57,7 @@ Separate compile, database, permission, dependency, selector, and test-assertion
 
 ## Output
 
-Return `# dbt Validation` with: Changed, including any repairs; Why this was the smallest scope; Verified, including target, commands run, and exit status; Remaining uncertainty. If execution is awaiting approval or a failure remains, state the exact next command or repair instead of exposing internal workflow state.
+Return `# dbt Validation` with: Changed, including any repairs; Why this was the smallest scope; Verified, including target, commands run, and exit status; Remaining uncertainty. Put any `unsatisfied_evidence` in Remaining uncertainty in plain words, such as "the tests passed against the existing relation; the edited model was not executed." If execution is awaiting approval or a failure remains, state the exact next command or repair instead of exposing internal workflow state.
 
 ## Verification
 

@@ -36,9 +36,34 @@ DEFAULT_PATHS: dict[str, tuple[str, ...]] = {
     "snapshot-paths": ("snapshots",),
     "seed-paths": ("seeds",),
     "analysis-paths": ("analyses",),
+    "function-paths": ("functions",),
 }
 DEFAULT_TARGET_PATH = "target"
 DEFAULT_PACKAGES_PATH = "dbt_packages"
+
+# Which engine is running matters for defaults that differ between them, and it
+# cannot be inferred by running dbt: static inference never executes anything.
+# Guessing "core" because it is more common would silently decide whether a
+# versioned model publishes an unsuffixed pointer relation.
+ENGINE_CORE = "core"
+ENGINE_FUSION = "fusion"
+ENGINE_UNKNOWN = "unknown"
+
+ENGINE_EVIDENCE_FILES = (
+    "requirements.txt",
+    "requirements-dev.txt",
+    "dev-requirements.txt",
+    "pyproject.toml",
+    "Pipfile",
+    "setup.py",
+    "setup.cfg",
+)
+FUSION_MARKER = re.compile(r"\bdbt[-_]fusion\b", re.I)
+CORE_MARKER = re.compile(r"\bdbt[-_]core\b", re.I)
+
+# Engine defaults for the unsuffixed relation dbt maintains alongside a
+# versioned model's own relations.
+POINTER_ENGINE_DEFAULTS: dict[str, bool] = {ENGINE_CORE: False, ENGINE_FUSION: True}
 
 # Historic and build directories that hold somebody else's code. The configured
 # packages path is added to this at runtime, because a project may rename it.
@@ -57,16 +82,18 @@ class ProjectContextError(ValueError):
 #
 # The toolkit ships standard-library Python only, so its YAML reader covers the
 # subset dbt files actually use. The danger is not the missing features; it is
-# reading a file that uses them and returning a confidently wrong answer. An
-# anchor that silently parses as a string can drop a source's freshness or
-# invent a column. These patterns let a caller say "unknown" instead.
+# reading a file that uses them and returning a confidently wrong answer.
+#
+# Anchors, aliases, merge keys, and flow mappings are no longer on this list:
+# dbt documents all four, its own freshness examples use `{count: 1, period:
+# day}`, and Core has had a dedicated `anchors:` property since 1.10. Calling a
+# healthy modern repository "unknown" was a worse answer than reading it. What
+# remains is what the reader genuinely cannot represent.
 
 UNSUPPORTED_YAML = (
-    ("anchor", re.compile(r"(?m)^[^#\n]*?:\s*&[A-Za-z0-9_-]+\s*$")),
-    ("alias", re.compile(r"(?m)^[^#\n]*?:\s*\*[A-Za-z0-9_-]+\s*$")),
-    ("merge_key", re.compile(r"(?m)^\s*<<\s*:")),
     ("multi_document", re.compile(r"(?m)^---\s*$[\s\S]*?^---\s*$")),
-    ("flow_mapping", re.compile(r"(?m)^[^#\n]*?:\s*\{.+\}\s*$")),
+    ("custom_tag", re.compile(r"(?m)^[^#\n]*?:\s*!!?[A-Za-z][\w:./-]*(?:\s|$)")),
+    ("complex_key", re.compile(r"(?m)^\s*\?\s")),
 )
 
 
@@ -86,10 +113,10 @@ def parse_yaml_checked(text: str) -> tuple[Any, list[str]]:
 
     constructs = unsupported_yaml_constructs(text)
     try:
-        document = infer_conventions.parse_yaml(text)
+        document, problems = infer_conventions.parse_yaml_with_diagnostics(text)
     except (ValueError, RecursionError) as exc:  # pragma: no cover - defensive
         return None, sorted({*constructs, f"unparseable: {exc}"})
-    return document, constructs
+    return document, sorted({*constructs, *problems})
 
 
 # --- Layout -------------------------------------------------------------------
@@ -150,6 +177,7 @@ class DbtProjectLayout:
         self.snapshot_paths = _configured_paths(config, "snapshot-paths")
         self.seed_paths = _configured_paths(config, "seed-paths")
         self.analysis_paths = _configured_paths(config, "analysis-paths")
+        self.function_paths = _configured_paths(config, "function-paths")
         self.target_path = _configured_single(config, "target-path", DEFAULT_TARGET_PATH)
         self.packages_install_path = _configured_single(
             config, "packages-install-path", DEFAULT_PACKAGES_PATH
@@ -170,9 +198,8 @@ class DbtProjectLayout:
         )
         flags = config.get("flags")
         self.flags = flags if isinstance(flags, dict) else {}
-        self.latest_version_pointer_default = bool(
-            self.flags.get("latest_version_pointer_enabled_by_default")
-        )
+        declared = self.flags.get("latest_version_pointer_enabled_by_default")
+        self.declared_pointer_default = declared if isinstance(declared, bool) else None
 
     def paths_for(self, kind: str) -> tuple[str, ...]:
         return {
@@ -182,6 +209,7 @@ class DbtProjectLayout:
             "snapshot": self.snapshot_paths,
             "seed": self.seed_paths,
             "analysis": self.analysis_paths,
+            "function": self.function_paths,
         }.get(kind, ())
 
     def kind_of(self, relative: str) -> str | None:
@@ -192,7 +220,7 @@ class DbtProjectLayout:
         """
         candidate = normalize_relative(relative)
         best: tuple[int, str] | None = None
-        for kind in ("model", "test", "macro", "snapshot", "seed", "analysis"):
+        for kind in ("model", "test", "macro", "snapshot", "seed", "analysis", "function"):
             for configured in self.paths_for(kind):
                 prefix = configured
                 if candidate == prefix or candidate.startswith(f"{prefix}/"):
@@ -220,6 +248,7 @@ class DbtProjectLayout:
             "snapshot_paths": list(self.snapshot_paths),
             "seed_paths": list(self.seed_paths),
             "analysis_paths": list(self.analysis_paths),
+            "function_paths": list(self.function_paths),
             "target_path": self.target_path,
             "packages_install_path": self.packages_install_path,
             "vendored_prefixes": sorted(self.vendored_prefixes),
@@ -263,6 +292,62 @@ def discover_projects(root: Path, *, max_depth: int = MAX_DISCOVERY_DEPTH) -> li
     return found
 
 
+def _declared_engine(*roots: Path | None) -> tuple[str | None, str | None]:
+    """An engine a human wrote down in `.ae/project.yml`, which is authoritative."""
+    for root in roots:
+        if root is None:
+            continue
+        candidate = root / ".ae" / "project.yml"
+        if not candidate.is_file():
+            continue
+        try:
+            document, _unsupported = parse_yaml_checked(
+                candidate.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            continue
+        value = document.get("engine") if isinstance(document, dict) else None
+        if isinstance(value, str) and value.strip().lower() in {ENGINE_CORE, ENGINE_FUSION}:
+            return value.strip().lower(), ".ae/project.yml"
+    return None, None
+
+
+def infer_engine(dbt_root: Path | None, git_root: Path | None) -> tuple[str, str]:
+    """Which dbt engine this repository runs, and the evidence for saying so.
+
+    Static inference cannot ask dbt, so the only honest answers are what a
+    dependency pin states and what a human recorded. Defaulting to Core because
+    it is more common would decide behaviour the repository never declared.
+    """
+    declared, source = _declared_engine(dbt_root, git_root)
+    if declared:
+        return declared, f"declared in {source}"
+
+    fusion = core = False
+    seen: set[Path] = set()
+    for root in (dbt_root, git_root):
+        if root is None:
+            continue
+        for name in ENGINE_EVIDENCE_FILES:
+            candidate = root / name
+            if candidate in seen or not candidate.is_file():
+                continue
+            seen.add(candidate)
+            try:
+                text = candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            fusion = fusion or bool(FUSION_MARKER.search(text))
+            core = core or bool(CORE_MARKER.search(text))
+    if fusion and not core:
+        return ENGINE_FUSION, "a pinned dbt-fusion dependency"
+    if core and not fusion:
+        return ENGINE_CORE, "a pinned dbt-core dependency"
+    if core and fusion:
+        return ENGINE_UNKNOWN, "both dbt-core and dbt-fusion are pinned"
+    return ENGINE_UNKNOWN, "no engine is pinned or declared"
+
+
 def git_root_for(path: Path) -> Path | None:
     try:
         import inspect_git
@@ -293,15 +378,34 @@ class ProjectContext:
         self.git_root = git_root
         self.sibling_projects = tuple(sibling_projects)
         self.discovery_note = discovery_note
+        self.engine, self.engine_evidence = infer_engine(dbt_root, git_root)
 
     @property
     def is_dbt_project(self) -> bool:
         return self.dbt_root is not None
 
     @property
-    def latest_version_pointer_default(self) -> bool:
-        """Whether every versioned model publishes a latest-version pointer view."""
-        return bool(self.layout and self.layout.latest_version_pointer_default)
+    def latest_version_pointer_default(self) -> bool | None:
+        """Whether every versioned model publishes a latest-version pointer view.
+
+        Three states, not two. The project flag settles it when present; Core
+        defaults to off and Fusion to on; and when the engine is unknown so is
+        this, because that pointer is a published relation and inventing an
+        answer would mis-state a rename's blast radius.
+        """
+        declared = self.layout.declared_pointer_default if self.layout else None
+        if declared is not None:
+            return declared
+        return POINTER_ENGINE_DEFAULTS.get(self.engine)
+
+    @property
+    def pointer_default_evidence(self) -> str:
+        declared = self.layout.declared_pointer_default if self.layout else None
+        if declared is not None:
+            return "project flag"
+        if self.engine in POINTER_ENGINE_DEFAULTS:
+            return f"{self.engine} default"
+        return "engine unknown"
 
     def relative_to_project(self, git_relative: str) -> str | None:
         """Translate a Git-root-relative path into a project-relative one.
@@ -368,6 +472,10 @@ class ProjectContext:
             "git_root": str(self.git_root) if self.git_root else None,
             "dbt_root": str(self.dbt_root) if self.dbt_root else None,
             "is_dbt_project": self.is_dbt_project,
+            "engine": self.engine,
+            "engine_evidence": self.engine_evidence,
+            "latest_version_pointer_default": self.latest_version_pointer_default,
+            "latest_version_pointer_evidence": self.pointer_default_evidence,
             "layout": self.layout.as_dict() if self.layout else None,
             "sibling_projects": [str(path) for path in self.sibling_projects],
             "discovery_note": self.discovery_note,

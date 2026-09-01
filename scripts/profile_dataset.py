@@ -522,6 +522,12 @@ def _records_from_json(
             f"({', '.join(sorted(empty))}), so there is no record array to profile. "
             "Choose one with --record-path to confirm which collection is intended."
         )
+    if len(empty) == 1:
+        # One named collection and nothing competing with it. An extract that
+        # returned no rows is a real and reportable answer; profiling the
+        # wrapper instead would claim one row that the file does not contain.
+        notes["record_path_inferred"] = empty[0]
+        return value[empty[0]]
     if isinstance(value.get("records"), list):
         return value["records"]
     return [value]

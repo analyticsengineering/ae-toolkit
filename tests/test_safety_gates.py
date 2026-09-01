@@ -54,6 +54,10 @@ class ShellSafetyGateTests(unittest.TestCase):
             "with recent as (select 1) delete from orders using recent": "delete",
             "create table t as select 1": "create",
             "show tables": "show",
+            "select * into surprise from orders": "select-into",
+            "explain select * into surprise from orders": "select-into",
+            "select * from orders into outfile '/tmp/o.csv'": "select-into",
+            "select * from orders where region in (select region from allowed)": "select",
         }
         for statement, expected in cases.items():
             with self.subTest(statement=statement):
@@ -78,6 +82,25 @@ class ShellSafetyGateTests(unittest.TestCase):
             self.assertIn("`SELECT`", text)
             self.assertIn("`EXPLAIN`", text)
             self.assertNotIn("`SHOW`", text)
+
+    def test_the_documents_claim_eligibility_rather_than_proven_safety(self) -> None:
+        """The gate reads syntax. Saying it proves more than that is the defect."""
+        side_effecting = "psql -c 'select cleanup_everything()'"
+        decision = safety_gate.classify(side_effecting)
+
+        self.assertEqual(
+            decision["permission"],
+            "ask",
+            "a well-formed SELECT that writes is exactly what syntax cannot catch",
+        )
+        for document in ("README.md", "SECURITY.md"):
+            text = (PLUGIN_ROOT / document).read_text(encoding="utf-8")
+            self.assertNotIn(
+                "prove is a single `SELECT`",
+                text,
+                f"{document} claims proof the gate cannot supply",
+            )
+            self.assertIn("syntactic", text, f"{document} must state what the test is")
 
     def test_removing_single_statement_enforcement_recreates_the_defect(self) -> None:
         attack = "psql -c 'select 1; create table surprise as select 1'"

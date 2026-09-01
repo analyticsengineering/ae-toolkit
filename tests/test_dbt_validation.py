@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from test_support import FIXTURES, load_module
 
@@ -505,6 +506,138 @@ class ArtifactProvenanceTests(unittest.TestCase):
         self.assertIsNotNone(freshness[1])
         self.assertIsNotNone(build[0])
         self.assertIsNone(build[1], "a build must not read a leftover sources.json")
+
+
+def _sources(
+    path: Path,
+    *,
+    generated_at: str = "2026-08-31T12:00:00Z",
+    invocation_id: str = "freshness-run",
+    status: str = "pass",
+) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "dbt_version": "1.12.0",
+                    "dbt_schema_version": "https://schemas.getdbt.com/dbt/sources/v3.json",
+                    "generated_at": generated_at,
+                    "invocation_id": invocation_id,
+                    "invocation_started_at": generated_at,
+                },
+                "results": [
+                    {
+                        "unique_id": "source.p.raw.orders",
+                        "status": status,
+                        "max_loaded_at": "2026-08-31T11:50:00Z",
+                        "snapshotted_at": generated_at,
+                        "criteria": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+class FreshnessProvenanceTests(unittest.TestCase):
+    """Freshness earns verification through the same rule run results do."""
+
+    def test_a_freshness_run_with_the_expected_invocation_is_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = _sources(Path(tmp) / "sources.json", invocation_id="freshness-run")
+            result = interpreter.interpret_results(
+                None,
+                sources=sources,
+                expected_operation="source_freshness",
+                invocation_id="freshness-run",
+            )
+
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["artifact_verified"])
+        self.assertEqual(result["provenance"]["artifact"], "sources")
+        self.assertEqual(result["status"], "passed")
+
+    def test_a_freshness_run_from_another_invocation_is_not_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = _sources(Path(tmp) / "sources.json", invocation_id="earlier-run")
+            result = interpreter.interpret_results(
+                None,
+                sources=sources,
+                expected_operation="source_freshness",
+                invocation_id="freshness-run",
+            )
+
+        self.assertFalse(result["verified"])
+        self.assertIn("different dbt invocation", result["provenance"]["reason"])
+
+    def test_a_freshness_artifact_predating_the_command_is_not_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = _sources(Path(tmp) / "sources.json", generated_at="2026-08-31T09:00:00Z")
+            result = interpreter.interpret_results(
+                None,
+                sources=sources,
+                expected_operation="source_freshness",
+                since="2026-08-31T10:00:00Z",
+            )
+
+        self.assertFalse(result["verified"])
+        self.assertIn("predates", result["provenance"]["reason"])
+
+    def test_an_overwritten_artifact_is_rejected_by_invocation_even_when_new(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = _sources(
+                Path(tmp) / "sources.json",
+                generated_at="2026-08-31T23:00:00Z",
+                invocation_id="a-later-unrelated-run",
+            )
+            result = interpreter.interpret_results(
+                None,
+                sources=sources,
+                expected_operation="source_freshness",
+                since="2026-08-31T10:00:00Z",
+                invocation_id="the-run-we-started",
+            )
+
+        self.assertFalse(
+            result["verified"],
+            "a newer artifact from a different command is not proof",
+        )
+
+    def test_the_invocation_id_is_recovered_from_a_json_dbt_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "dbt.log"
+            log.write_text(
+                "\n".join(
+                    [
+                        "not json at all",
+                        json.dumps({"info": {"name": "MainReportVersion"}}),
+                        json.dumps({"info": {"invocation_id": "run-from-log"}}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(interpreter.invocation_id_from_log(log), "run-from-log")
+            self.assertEqual(interpreter.invocation_id_from_log(tmp), "run-from-log")
+
+    def test_without_the_shared_correlation_freshness_could_never_verify(self) -> None:
+        """The defect this replaced: correlation only ran for run results."""
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = _sources(Path(tmp) / "sources.json", invocation_id="freshness-run")
+            with mock.patch.object(
+                interpreter.artifact_inventory,
+                "correlate",
+                lambda metadata, **kwargs: (None, "correlation disabled"),
+            ):
+                broken = interpreter.interpret_results(
+                    None,
+                    sources=sources,
+                    expected_operation="source_freshness",
+                    invocation_id="freshness-run",
+                )
+
+        self.assertFalse(broken["verified"])
 
 
 class ResultSemanticsTests(unittest.TestCase):

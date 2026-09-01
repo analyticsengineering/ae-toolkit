@@ -9,6 +9,7 @@ where the repository genuinely disagrees with itself.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -73,6 +74,11 @@ TEST_KEYS = ("data_tests", "tests")
 KEY_LINE = re.compile(r"^([^:]+):(?:\s+(.*))?$")
 BLOCK_SCALARS = {">", "|", ">-", "|-", ">+", "|+"}
 
+# dbt documents anchors, aliases, and merge keys, including a dedicated
+# top-level `anchors:` property, so the reader has to understand them.
+ANCHOR_VALUE = re.compile(r"^&(?P<name>[^\s\[\]{},]+)\s*(?P<rest>.*)$", re.S)
+ALIAS_VALUE = re.compile(r"^\*(?P<name>[^\s\[\]{},]+)\s*$")
+
 
 class ConventionInferenceError(ValueError):
     """Raised for expected convention inference errors."""
@@ -105,16 +111,80 @@ def _children(lines: list[tuple[int, str]], index: int, indent: int) -> tuple[li
     return child, end
 
 
-def _parse_block(lines: list[tuple[int, str]], indent: int) -> Any:
+class _Anchors:
+    """Anchors seen so far, plus anything that made the document unreadable.
+
+    dbt documents anchors, aliases, and merge keys, and its own examples use
+    them, so refusing to read them turned healthy repositories into "unknown".
+    Resolution is strictly backwards -- an alias can only name an anchor already
+    parsed -- which makes a cycle unrepresentable rather than a case to detect.
+    """
+
+    def __init__(self) -> None:
+        self.values: dict[str, Any] = {}
+        self.problems: list[str] = []
+
+    def define(self, name: str, value: Any) -> Any:
+        self.values[name] = value
+        return value
+
+    def resolve(self, name: str) -> Any:
+        if name not in self.values:
+            self.problems.append(f"unresolved_alias: {name}")
+            return None
+        return copy.deepcopy(self.values[name])
+
+
+def _split_anchor(raw: str) -> tuple[str | None, str]:
+    match = ANCHOR_VALUE.match(raw)
+    if not match:
+        return None, raw
+    return match.group("name"), (match.group("rest") or "").strip()
+
+
+def _alias_name(raw: str) -> str | None:
+    match = ALIAS_VALUE.match(raw)
+    return match.group("name") if match else None
+
+
+def _merge_sources(raw: str, anchors: _Anchors) -> list[dict[str, Any]]:
+    """The mappings a `<<:` line pulls in, highest precedence first."""
+    text = raw.strip()
+    names: list[str] = []
+    if text.startswith("[") and text.endswith("]"):
+        names = [
+            item
+            for part in inspect_dbt._split_flow(text[1:-1])
+            if (item := _alias_name(part.strip()))
+        ]
+    elif (single := _alias_name(text)) is not None:
+        names = [single]
+    else:
+        anchors.problems.append("merge_key: the merged value is not an alias")
+        return []
+    merged: list[dict[str, Any]] = []
+    for name in names:
+        value = anchors.resolve(name)
+        if isinstance(value, dict):
+            merged.append(value)
+        elif value is not None:
+            anchors.problems.append(f"merge_key: {name} is not a mapping")
+    return merged
+
+
+def _parse_block(lines: list[tuple[int, str]], indent: int, anchors: _Anchors) -> Any:
     if not lines:
         return None
     if lines[0][1].startswith("-"):
-        return _parse_sequence(lines, indent)
-    return _parse_mapping(lines, indent)
+        return _parse_sequence(lines, indent, anchors)
+    return _parse_mapping(lines, indent, anchors)
 
 
-def _parse_mapping(lines: list[tuple[int, str]], indent: int) -> dict[str, Any]:
-    result: dict[str, Any] = {}
+def _parse_mapping(
+    lines: list[tuple[int, str]], indent: int, anchors: _Anchors
+) -> dict[str, Any]:
+    explicit: dict[str, Any] = {}
+    merges: list[dict[str, Any]] = []
     index = 0
     while index < len(lines):
         current_indent, line = lines[index]
@@ -128,19 +198,40 @@ def _parse_mapping(lines: list[tuple[int, str]], indent: int) -> dict[str, Any]:
         key = match.group(1).strip()
         raw = (match.group(2) or "").strip()
         child, end = _children(lines, index, indent)
-        if raw in BLOCK_SCALARS:
-            result[key] = " ".join(text for _, text in child).strip()
-        elif raw:
-            result[key] = inspect_dbt._yaml_scalar(raw)
-        elif child:
-            result[key] = _parse_block(child, child[0][0])
-        else:
-            result[key] = None
         index = end
+
+        if key == "<<":
+            merges.extend(_merge_sources(raw, anchors))
+            continue
+
+        anchor, raw = _split_anchor(raw)
+        alias = _alias_name(raw) if raw else None
+        if alias is not None:
+            value: Any = anchors.resolve(alias)
+        elif raw in BLOCK_SCALARS:
+            value = " ".join(text for _, text in child).strip()
+        elif raw:
+            value = inspect_dbt._yaml_scalar(raw)
+        elif child:
+            value = _parse_block(child, child[0][0], anchors)
+        else:
+            value = None
+        if anchor:
+            anchors.define(anchor, value)
+        explicit[key] = value
+
+    if not merges:
+        return explicit
+    # YAML merge precedence: the mapping's own keys win, and among several
+    # merged mappings the first named wins.
+    result: dict[str, Any] = {}
+    for source in reversed(merges):
+        result.update(source)
+    result.update(explicit)
     return result
 
 
-def _parse_sequence(lines: list[tuple[int, str]], indent: int) -> list[Any]:
+def _parse_sequence(lines: list[tuple[int, str]], indent: int, anchors: _Anchors) -> list[Any]:
     items: list[Any] = []
     index = 0
     while index < len(lines):
@@ -150,28 +241,43 @@ def _parse_sequence(lines: list[tuple[int, str]], indent: int) -> list[Any]:
             continue
         remainder = line[1:].strip()
         child, end = _children(lines, index, indent)
-        if remainder and KEY_LINE.match(remainder):
+        index = end
+
+        anchor, remainder = _split_anchor(remainder)
+        alias = _alias_name(remainder) if remainder else None
+        if alias is not None:
+            value: Any = anchors.resolve(alias)
+        elif remainder and KEY_LINE.match(remainder):
             # The key on a dash line belongs at its own textual column. Aligning
             # it with the child lines instead would flatten a nested block, so
             # `- relationships:` would absorb `to:` and `field:` as siblings.
-            key_indent = current_indent + (len(line) - len(remainder))
-            items.append(_parse_mapping([(key_indent, remainder), *child], key_indent))
+            offset = len(line) - len(line[1:].lstrip())
+            key_indent = current_indent + offset
+            value = _parse_mapping([(key_indent, remainder), *child], key_indent, anchors)
         elif remainder:
-            items.append(inspect_dbt._yaml_scalar(remainder))
+            value = inspect_dbt._yaml_scalar(remainder)
         elif child:
-            items.append(_parse_block(child, child[0][0]))
+            value = _parse_block(child, child[0][0], anchors)
         else:
-            items.append(None)
-        index = end
+            value = None
+        if anchor:
+            anchors.define(anchor, value)
+        items.append(value)
     return items
+
+
+def parse_yaml_with_diagnostics(text: str) -> tuple[Any, list[str]]:
+    """Parse a dbt YAML document and report anything that made it unreliable."""
+    anchors = _Anchors()
+    lines = _significant_lines(text)
+    document = {} if not lines else _parse_block(lines, lines[0][0], anchors)
+    return document, sorted(set(anchors.problems))
 
 
 def parse_yaml(text: str) -> Any:
     """Parse the subset of YAML that dbt configuration files actually use."""
-    lines = _significant_lines(text)
-    if not lines:
-        return {}
-    return _parse_block(lines, lines[0][0])
+    document, _problems = parse_yaml_with_diagnostics(text)
+    return document
 
 
 # --- Evidence ----------------------------------------------------------------
@@ -971,12 +1077,19 @@ def _project_facts(
             if (root / candidate).is_file()
         ],
     ]
+    import project_context as _context
+
+    engine, engine_evidence = _context.infer_engine(root, _context.git_root_for(root))
     facts = {
         "name": project.get("name"),
         "transformation": "dbt",
         "adapter": adapter,
         "adapter_source": adapter_source,
         "adapter_confidence": _adapter_confidence(adapter_source),
+        # Which engine runs matters for defaults that differ between Core and
+        # Fusion, and static inference can only report what is written down.
+        "engine": engine,
+        "engine_evidence": engine_evidence,
         "packages": sorted(set(packages)),
         "profile_fingerprint": _profile_fingerprint(root, fingerprint_inputs),
     }

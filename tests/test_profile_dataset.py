@@ -144,6 +144,19 @@ class ProfileDatasetTests(unittest.TestCase):
         self.assertIn("orders", message)
         self.assertIn("--record-path", message)
 
+    def test_one_empty_array_is_an_extract_that_returned_no_rows(self) -> None:
+        report = profile_dataset.profile_dataset(
+            FIXTURES / "data" / "single_empty_array.json"
+        )
+
+        self.assertEqual(report["record_path_inferred"], "customers")
+        self.assertEqual(report["row_count"], 0)
+        self.assertEqual(
+            report["columns"],
+            [],
+            "profiling the wrapper would report one row and a generated_at column",
+        )
+
     def test_blank_csv_lines_are_formatting_not_missing_data(self) -> None:
         report = profile_dataset.profile_dataset(FIXTURES / "data" / "blank_rows.csv")
 

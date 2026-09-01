@@ -83,6 +83,52 @@ def _strip_yaml_comment(value: str) -> str:
     return "".join(result).strip()
 
 
+def _split_flow(inner: str) -> list[str]:
+    """Split a flow collection on commas that are not inside a nested one."""
+    parts: list[str] = []
+    depth = 0
+    quote: str | None = None
+    current: list[str] = []
+    for char in inner:
+        if quote is not None:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            continue
+        if char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+        if char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return [part for part in parts if part.strip()]
+
+
+def _flow_mapping(inner: str) -> dict[str, Any]:
+    """Read `{count: 1, period: day}`, which dbt's own freshness examples use."""
+    result: dict[str, Any] = {}
+    for part in _split_flow(inner):
+        key, separator, value = part.partition(":")
+        if not separator:
+            continue
+        result[_unquote_key(key.strip())] = _yaml_scalar(value)
+    return result
+
+
+def _unquote_key(key: str) -> str:
+    if len(key) >= 2 and key[0] == key[-1] and key[0] in {"'", '"'}:
+        return key[1:-1]
+    return key
+
+
 def _yaml_scalar(value: str) -> Any:
     value = _strip_yaml_comment(value).strip()
     if not value:
@@ -97,12 +143,9 @@ def _yaml_scalar(value: str) -> Any:
     if re.fullmatch(r"[+-]?\d+", value):
         return int(value)
     if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1]
-        return [
-            _yaml_scalar(part)
-            for part in re.split(r",(?=(?:[^'\"]|'[^']*'|\"[^\"]*\")*$)", inner)
-            if part.strip()
-        ]
+        return [_yaml_scalar(part) for part in _split_flow(value[1:-1])]
+    if value.startswith("{") and value.endswith("}"):
+        return _flow_mapping(value[1:-1])
     return value
 
 

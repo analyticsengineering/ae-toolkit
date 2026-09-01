@@ -48,6 +48,80 @@ class ArtifactStateError(ValueError):
     """Raised when an explicitly named state directory cannot be used."""
 
 
+@dataclass
+class ArtifactEvidence:
+    """One artifact considered as proof that a specific command ran.
+
+    Correlation used to live inside the run-results reader, so a freshness check
+    could write a brand-new `sources.json` with the right invocation and still be
+    reported as unverified. Every artifact kind now travels the same path.
+    """
+
+    kind: str
+    path: Path | None
+    metadata: dict[str, Any]
+    correlated: bool | None
+    reason: str
+
+    @property
+    def generated_at(self) -> str | None:
+        return self.metadata.get("generated_at")
+
+    @property
+    def invocation_id(self) -> str | None:
+        return self.metadata.get("invocation_id")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "artifact": self.kind,
+            "path": self.path.as_posix() if self.path else None,
+            "generated_at": self.generated_at,
+            "invocation_id": self.invocation_id,
+            "correlated": self.correlated,
+            "reason": self.reason,
+        }
+
+
+def correlate(
+    metadata: dict[str, Any],
+    *,
+    since: str | None = None,
+    invocation_id: str | None = None,
+) -> tuple[bool | None, str]:
+    """Whether this artifact was written by the command that just ran.
+
+    An interpreter that says "verified" while reading yesterday's artifact is
+    worse than one that says nothing: it retires a real obligation on the
+    strength of an unrelated file. The invocation ID is proof; a timestamp is
+    only the fallback when no ID was captured.
+    """
+    if invocation_id:
+        recorded = metadata.get("invocation_id")
+        if not recorded:
+            return False, "The artifact records no invocation ID to compare against."
+        matched = recorded == invocation_id
+        return matched, (
+            "The artifact records the expected invocation."
+            if matched
+            else "The artifact was written by a different dbt invocation."
+        )
+    if since:
+        boundary = parse_moment(since)
+        written = parse_moment(metadata.get("generated_at"))
+        if boundary is None or written is None:
+            return False, "The artifact carries no comparable generation time."
+        matched = written > boundary
+        return matched, (
+            "The artifact was written after the command started."
+            if matched
+            else "The artifact predates the command, so it describes an earlier run."
+        )
+    return None, (
+        "No expected invocation or start time was supplied, so the artifact "
+        "cannot be tied to a specific command."
+    )
+
+
 def _load_json(path: Path) -> tuple[Any, str | None]:
     try:
         return json.loads(path.read_text(encoding="utf-8")), None
@@ -213,6 +287,25 @@ class ArtifactInventory:
             return None
         source = (self.prior or {}) if prior else self.current
         return source.get(kind)
+
+    def resolve_operation_paths(self, operation: str | None) -> dict[str, Path | None]:
+        """Which artifact files an operation is entitled to read.
+
+        Resolving this in two places let the planner name one artifact while the
+        interpreter read another.
+        """
+
+        def located(kind: str) -> Path | None:
+            artifact = self.current.get(kind)
+            return artifact.path if artifact and artifact.present else None
+
+        if operation is None:
+            return {"run_results": located("run_results"), "sources": located("sources")}
+        kind = OPERATION_ARTIFACTS.get(operation)
+        return {
+            "run_results": located("run_results") if kind == "run_results" else None,
+            "sources": located("sources") if kind == "sources" else None,
+        }
 
     def as_dict(self, root: Path | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {

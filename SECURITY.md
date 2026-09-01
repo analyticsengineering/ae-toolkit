@@ -35,7 +35,8 @@ V1 is analysis-first and does not support production database mutation:
 
 - `DROP` and `TRUNCATE` are denied.
 - `INSERT`, `UPDATE`, `DELETE`, `MERGE`, and `ALTER` are denied.
-- a single `SELECT` or `EXPLAIN` is the only statement class a recognized database client may be approved to run; every other class, and every invocation carrying more than one statement, is denied;
+- a single `SELECT` or `EXPLAIN` is the only statement class a recognized database client may be approved to run; every other class, and every invocation carrying more than one statement, is denied. `SELECT ... INTO` is classified as a write, because it creates a relation on Postgres and T-SQL and a file on MySQL;
+- that classification is syntactic, and it establishes eligibility for approval rather than absence of effect. A single well-formed `SELECT` can still call a function that writes, so the human reading the statement before approving it is the control for semantics, not the gate;
 - recognized database-client `SELECT` and `EXPLAIN` operations require explicit approval and confirmation that the target is an approved local or development environment;
 - dbt commands that may execute warehouse queries require explicit approval and target review;
 - generated SQL is a proposal for human review, never authorization to execute;

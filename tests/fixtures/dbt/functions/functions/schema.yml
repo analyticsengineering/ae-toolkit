@@ -1,0 +1,27 @@
+version: 2
+
+functions:
+  - name: cents_to_dollars
+    description: Convert an integer cent amount to a decimal dollar amount.
+    arguments:
+      - name: cents
+        data_type: bigint
+    returns:
+      data_type: numeric
+
+  - name: cents_to_dollars
+    description: The decimal overload, defined in its own file.
+    defined_in: cents_to_dollars_numeric
+    arguments:
+      - name: cents
+        data_type: numeric
+    returns:
+      data_type: numeric
+
+  - name: normalize_email
+    description: A JavaScript UDF that lowercases and trims an address.
+    arguments:
+      - name: address
+        data_type: string
+    returns:
+      data_type: string

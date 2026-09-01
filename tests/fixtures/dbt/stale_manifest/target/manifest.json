@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.12.0",
+    "generated_at": "2026-08-28T09:00:00Z",
+    "invocation_id": "an-earlier-build",
+    "project_name": "analytics"
+  },
+  "nodes": {
+    "model.analytics.orders.v1": {
+      "resource_type": "model",
+      "name": "orders",
+      "version": 1,
+      "latest_version": 1,
+      "package_name": "analytics",
+      "original_file_path": "models/orders_v1.sql",
+      "path": "orders_v1.sql",
+      "depends_on": {"nodes": []}
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "exposures": {},
+  "child_map": {},
+  "parent_map": {}
+}

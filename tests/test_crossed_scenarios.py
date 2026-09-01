@@ -11,6 +11,7 @@ actually interact.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -368,6 +369,84 @@ class CrossedValidationPlanTests(unittest.TestCase):
         )
 
 
+class EvidenceCoverageTests(unittest.TestCase):
+    """Running a command successfully is not the same as validating the change."""
+
+    def plan_after(self, mutate, **kwargs) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = committed_copy(tmp, "versioned_models")
+            mutate(root)
+            return planner.plan_validation(root, target="dev", **kwargs)
+
+    @staticmethod
+    def edit_model(root: Path) -> None:
+        model = root / "models" / "orders_v2.sql"
+        model.write_text(model.read_text(encoding="utf-8") + "\n-- changed\n", "utf-8")
+
+    def test_a_changed_model_owes_both_execution_and_tests(self) -> None:
+        plan = self.plan_after(self.edit_model, intent="build")
+
+        self.assertEqual(plan["required_evidence"], ["transformation", "tests"])
+        self.assertEqual(plan["satisfied_evidence"], ["transformation", "tests"])
+        self.assertEqual(plan["change_verification_status"], "fully_covered")
+
+    def test_asking_only_for_tests_leaves_the_implementation_unproven(self) -> None:
+        plan = self.plan_after(self.edit_model, intent="test", allow_broader_intent=True)
+
+        self.assertEqual(plan["satisfied_evidence"], ["tests"])
+        self.assertEqual(plan["unsatisfied_evidence"], ["transformation"])
+        self.assertEqual(plan["change_verification_status"], "partially_covered")
+        self.assertTrue(
+            any(
+                "changed model implementation was executed" in warning
+                for warning in plan["warnings"]
+            ),
+            "the open obligation has to be said out loud",
+        )
+
+    def test_asking_only_to_run_leaves_the_tests_unproven(self) -> None:
+        plan = self.plan_after(self.edit_model, intent="run", allow_broader_intent=True)
+
+        self.assertEqual(plan["satisfied_evidence"], ["transformation"])
+        self.assertEqual(plan["unsatisfied_evidence"], ["tests"])
+
+    def test_compiling_proves_nothing_the_change_owes(self) -> None:
+        plan = self.plan_after(self.edit_model, intent="compile", allow_broader_intent=True)
+
+        self.assertEqual(plan["satisfied_evidence"], ["compilation"])
+        self.assertEqual(plan["unsatisfied_evidence"], ["transformation", "tests"])
+        self.assertEqual(plan["change_verification_status"], "not_covered")
+
+    def test_each_step_declares_what_it_proves(self) -> None:
+        plan = self.plan_after(self.edit_model, intent="build")
+        build = next(
+            step for step in plan["validation_steps"] if step["operation"] == "model_validation"
+        )
+        parse = next(
+            step for step in plan["validation_steps"] if step["operation"] == "parse"
+        )
+
+        self.assertEqual(build["provides_evidence"], ["transformation", "tests"])
+        self.assertEqual(
+            parse["provides_evidence"],
+            [],
+            "parsing builds the graph; it does not execute the change",
+        )
+
+    def test_a_freshness_only_change_is_fully_covered_by_freshness(self) -> None:
+        def edit(root: Path) -> None:
+            sources = root / "models" / "sources.yml"
+            sources.write_text(
+                sources.read_text(encoding="utf-8").replace("count: 12", "count: 6"),
+                encoding="utf-8",
+            )
+
+        plan = self.plan_after(edit, intent="source_freshness")
+
+        self.assertEqual(plan["required_evidence"], ["freshness"])
+        self.assertEqual(plan["change_verification_status"], "fully_covered")
+
+
 class TypedObligationTests(unittest.TestCase):
     """Identity survives into the selectors, and one file can owe several checks."""
 
@@ -424,8 +503,8 @@ class TypedObligationTests(unittest.TestCase):
         self.assertEqual(rename_record["from"]["version"], "beta")
         self.assertEqual(
             sorted(rename_record["surviving_references"]),
-            ["customer_lifetime", "fct_order_summary"],
-            "both still call ref('customers', v='beta')",
+            ["customer_lifetime", "fct_order_summary", "orders.v2"],
+            "each still calls ref('customers', v='beta'), and one of them is a version",
         )
         self.assertTrue(
             any("still reference customers" in warning for warning in plan["warnings"])
@@ -481,6 +560,79 @@ class TypedObligationTests(unittest.TestCase):
         steps = {step["operation"]: step for step in plan["validation_steps"]}
         self.assertEqual(steps["source_freshness"]["selectors"], ["source:raw.orders"])
         self.assertIn("fct_order_summary+", steps["model_validation"]["selectors"])
+
+    def test_a_contract_change_on_one_version_selects_only_that_version(self) -> None:
+        def edit(root: Path) -> None:
+            schema = root / "models" / "schema.yml"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace(
+                    "    versions:\n      - v: 1\n      - v: 2\n",
+                    "    versions:\n"
+                    "      - v: 1\n"
+                    "        columns:\n"
+                    "          - name: amount\n"
+                    "            data_type: numeric\n"
+                    "      - v: 2\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+
+        plan = self.plan_after(edit, intent="build")
+        build = next(
+            step for step in plan["validation_steps"] if step["operation"] == "model_validation"
+        )
+
+        self.assertEqual(build["selectors"], ["orders.v1+"])
+        self.assertEqual(
+            plan["scope"]["yaml_deltas"]["models/schema.yml"][0]["models"], ["orders.v1"]
+        )
+
+    def test_a_test_change_on_one_version_tests_only_that_version(self) -> None:
+        def edit(root: Path) -> None:
+            schema = root / "models" / "schema.yml"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace(
+                    "    versions:\n      - v: 1\n      - v: 2\n",
+                    "    versions:\n"
+                    "      - v: 1\n"
+                    "      - v: 2\n"
+                    "        data_tests:\n"
+                    "          - unique\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+
+        plan = self.plan_after(edit, intent="build")
+        test_step = next(
+            step for step in plan["validation_steps"] if step["operation"] == "test"
+        )
+
+        self.assertEqual(test_step["selectors"], ["orders.v2"])
+
+    def test_a_shared_model_field_still_reaches_every_version(self) -> None:
+        def edit(root: Path) -> None:
+            schema = root / "models" / "schema.yml"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace(
+                    "      - name: order_id\n",
+                    "      - name: order_id\n        data_type: bigint\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+
+        plan = self.plan_after(edit, intent="build")
+        build = next(
+            step for step in plan["validation_steps"] if step["operation"] == "model_validation"
+        )
+
+        self.assertEqual(
+            build["selectors"],
+            ["orders.v1+", "orders.v2+"],
+            "a column shared by every version obliges every version",
+        )
 
     def test_a_freshness_request_never_becomes_a_freshness_command_for_tests(self) -> None:
         def edit(root: Path) -> None:
@@ -551,10 +703,36 @@ class TypedObligationTests(unittest.TestCase):
         removal = plan["scope"]["source_removals"][0]
 
         self.assertEqual(removal["sources"], [{"source": "raw", "table": "products"}])
-        self.assertEqual(removal["surviving_consumers"], ["dim_products"])
+        self.assertEqual(
+            removal["surviving_consumers"],
+            ["dim_products.v1", "dim_products.v2"],
+            "both versions read the removed source, and both are named",
+        )
         self.assertTrue(
             any("still read it" in warning for warning in plan["warnings"])
         )
+
+    def test_a_source_read_by_one_version_selects_only_that_version(self) -> None:
+        def edit(root: Path) -> None:
+            sources = root / "models" / "sources.yml"
+            sources.write_text(
+                sources.read_text(encoding="utf-8").replace(
+                    "      - name: payments\n",
+                    "      - name: payments\n        description: Legacy payment feed.\n"
+                    "        columns:\n          - name: order_id\n"
+                    "            data_tests:\n              - not_null\n",
+                ),
+                encoding="utf-8",
+            )
+
+        plan = self.plan_after(edit, intent="build")
+        selectors = plan["scope"]["selectors"]
+
+        self.assertIn("orders.v1+", selectors)
+        self.assertNotIn(
+            "orders.v2+", selectors, "version 2 stopped reading this source"
+        )
+        self.assertNotIn("orders+", selectors, "a bare name would select both versions")
 
 
 class DeletionWithAndWithoutStateTests(unittest.TestCase):
@@ -836,23 +1014,101 @@ class ConfiguredPathTests(unittest.TestCase):
         self.assertFalse(finance.layout.is_own_code("vendor/dbt_utils/macros/surrogate_key.sql"))
 
 
+class ModernYamlTests(unittest.TestCase):
+    """dbt documents anchors, aliases, merge keys, and flow mappings."""
+
+    def setUp(self) -> None:
+        self.text = (DBT_FIXTURES / "modern_yaml" / "models" / "schema.yml").read_text(
+            encoding="utf-8"
+        )
+        self.document, self.constructs = project_context.parse_yaml_checked(self.text)
+
+    def test_a_documented_dbt_document_is_readable(self) -> None:
+        self.assertEqual(self.constructs, [])
+
+    def test_a_flow_mapping_becomes_a_mapping(self) -> None:
+        orders = self.document["sources"][0]["tables"][0]
+
+        self.assertEqual(
+            orders["freshness"]["warn_after"], {"count": 12, "period": "hour"}
+        )
+
+    def test_an_alias_reproduces_the_anchored_value(self) -> None:
+        tables = self.document["sources"][0]["tables"]
+
+        self.assertEqual(tables[0]["freshness"], tables[1]["freshness"])
+
+    def test_an_alias_copies_rather_than_shares_the_anchored_value(self) -> None:
+        tables = self.document["sources"][0]["tables"]
+        tables[0]["freshness"]["warn_after"]["count"] = 999
+
+        self.assertEqual(
+            tables[1]["freshness"]["warn_after"]["count"],
+            12,
+            "sharing one object would let an edit to orders rewrite customers",
+        )
+
+    def test_a_sequence_anchor_survives_aliasing(self) -> None:
+        events = self.document["models"][1]
+
+        self.assertEqual(events["columns"], [{"name": "_loaded_at", "description": "Warehouse load time."}])
+
+    def test_merge_precedence_follows_the_yaml_rules(self) -> None:
+        freshness = self.document["sources"][0]["tables"][2]["freshness"]
+
+        self.assertEqual(
+            freshness["warn_after"],
+            {"count": 1, "period": "hour"},
+            "the first alias in the merge sequence wins",
+        )
+        self.assertEqual(
+            freshness["error_after"],
+            {"count": 6, "period": "hour"},
+            "the mapping's own key outranks anything merged in",
+        )
+
+    def test_the_planner_plans_freshness_from_a_merged_declaration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = committed_copy(tmp, "modern_yaml")
+            schema = root / "models" / "schema.yml"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace("count: 6", "count: 3"),
+                encoding="utf-8",
+            )
+            plan = planner.plan_validation(root, target="dev", intent="build")
+
+        self.assertEqual(plan["scope"]["unsupported_yaml"], {})
+        freshness = next(
+            step
+            for step in plan["validation_steps"]
+            if step["operation"] == "source_freshness"
+        )
+        self.assertEqual(freshness["selectors"], ["source:app.events"])
+
+
 class UnsupportedYamlTests(unittest.TestCase):
     """A file the reader cannot interpret must not produce a confident answer."""
 
-    def test_anchors_and_aliases_are_named_rather_than_misread(self) -> None:
-        text = (DBT_FIXTURES / "ambiguous_yaml" / "models" / "schema.yml").read_text(
-            encoding="utf-8"
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = (
+            DBT_FIXTURES / "unsupported_yaml" / "models" / "schema.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_a_custom_tag_is_named_rather_than_misread(self) -> None:
+        self.assertEqual(
+            project_context.unsupported_yaml_constructs(self.text), ["custom_tag"]
         )
 
-        self.assertEqual(
-            project_context.unsupported_yaml_constructs(text), ["alias", "anchor"]
-        )
-        _, constructs = project_context.parse_yaml_checked(text)
-        self.assertEqual(constructs, ["alias", "anchor"])
+    def test_an_alias_with_no_anchor_is_reported_rather_than_guessed(self) -> None:
+        _, constructs = project_context.parse_yaml_checked(self.text)
+
+        self.assertIn("custom_tag", constructs)
+        self.assertIn("unresolved_alias: never_declared", constructs)
 
     def test_the_planner_reports_the_construct_instead_of_a_freshness_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = committed_copy(tmp, "ambiguous_yaml")
+            root = committed_copy(tmp, "unsupported_yaml")
             schema = root / "models" / "schema.yml"
             schema.write_text(
                 schema.read_text(encoding="utf-8").replace("count: 12", "count: 6"),
@@ -861,7 +1117,7 @@ class UnsupportedYamlTests(unittest.TestCase):
             plan = planner.plan_validation(root, target="dev", intent="build")
 
         self.assertIn("models/schema.yml", plan["scope"]["unsupported_yaml"])
-        self.assertIn("anchor", plan["scope"]["unsupported_yaml"]["models/schema.yml"])
+        self.assertIn("custom_tag", plan["scope"]["unsupported_yaml"]["models/schema.yml"])
 
 
 class AmbiguousAdapterTests(unittest.TestCase):
@@ -889,6 +1145,212 @@ class AmbiguousAdapterTests(unittest.TestCase):
 
         self.assertNotIn("models/fct_events.sql", flagged, "append replaces no rows")
         self.assertIn("models/fct_sessions.sql", flagged, "merge without a key is a defect")
+
+
+class VersionOrderingTests(unittest.TestCase):
+    """dbt decides which version is latest; the toolkit reproduces that rule."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.context = project_context.resolve_project_context(
+            DBT_FIXTURES / "stale_manifest"
+        )
+        cls.index = resource_identity.build_index(cls.context)
+        cls.by_path = {
+            resource.path: resource for resource in cls.index.resources if resource.path
+        }
+        document = infer_conventions.parse_yaml(
+            (DBT_FIXTURES / "stale_manifest/models/schema.yml").read_text(encoding="utf-8")
+        )
+        cls.declared = {
+            declaration.name: declaration
+            for declaration in resource_identity.model_declarations(
+                document, "models/schema.yml"
+            )
+        }
+
+    def test_declaration_order_does_not_decide_the_latest_version(self) -> None:
+        self.assertEqual(self.declared["shipments"].resolved_latest(), "4")
+
+    def test_quoted_numeric_versions_still_compare_numerically(self) -> None:
+        self.assertEqual(
+            self.declared["invoices"].resolved_latest(),
+            "10",
+            "dbt casts version identifiers to float before comparing them",
+        )
+
+    def test_an_arbitrary_string_version_keeps_its_exact_text(self) -> None:
+        forecasts = self.by_path["models/forecasts_current.sql"]
+
+        self.assertEqual((forecasts.name, forecasts.version), ("forecasts", "2026-q3"))
+        self.assertEqual(forecasts.selector(), "forecasts.v2026-q3")
+        self.assertTrue(forecasts.is_latest_version)
+
+    def test_a_string_version_in_a_ref_is_not_truncated(self) -> None:
+        refs = resource_identity.parse_refs(
+            "select * from {{ ref('forecasts', version='2026-q3') }}"
+        )
+
+        self.assertEqual([(ref.name, ref.version) for ref in refs], [("forecasts", "2026-q3")])
+
+    def test_a_slash_bearing_version_survives_parsing(self) -> None:
+        refs = resource_identity.parse_refs(
+            'select * from {{ ref("orders", v="release/2") }}'
+        )
+
+        self.assertEqual([ref.version for ref in refs], ["release/2"])
+
+    def test_a_stale_manifest_cannot_veto_the_current_yaml(self) -> None:
+        first = self.by_path["models/orders_v1.sql"]
+        second = self.by_path["models/orders_v2.sql"]
+
+        self.assertFalse(first.is_latest_version, "the tree has moved past v1")
+        self.assertTrue(second.is_latest_version)
+        self.assertEqual(first.identity_evidence, "yaml")
+
+    def test_the_previous_latest_is_kept_as_historical_evidence(self) -> None:
+        first = self.by_path["models/orders_v1.sql"]
+
+        self.assertEqual(
+            first.prior_latest_version,
+            "1",
+            "the last build's opinion is recorded, not applied",
+        )
+
+    def test_a_corroborating_manifest_still_supplies_the_unique_id(self) -> None:
+        first = self.by_path["models/orders_v1.sql"]
+        second = self.by_path["models/orders_v2.sql"]
+
+        self.assertEqual(first.unique_id, "model.analytics.orders.v1")
+        self.assertIsNone(second.unique_id, "the last build never saw this version")
+
+    def test_without_dbt_ordering_the_first_declared_version_wins(self) -> None:
+        """The defect this replaced: `versions[-1]` called 1 the latest of 4,3,2,1."""
+        shipments = self.declared["shipments"]
+
+        self.assertEqual(shipments.versions[-1].version, "1")
+        self.assertNotEqual(shipments.resolved_latest(), "1")
+
+
+class EngineAndFunctionTests(unittest.TestCase):
+    """Current dbt has an engine question and a function resource type."""
+
+    def test_a_pinned_core_dependency_turns_the_pointer_default_off(self) -> None:
+        context = project_context.resolve_project_context(DBT_FIXTURES / "engine_core")
+
+        self.assertEqual(context.engine, "core")
+        self.assertFalse(context.latest_version_pointer_default)
+        self.assertEqual(context.pointer_default_evidence, "core default")
+
+    def test_a_pinned_fusion_dependency_turns_the_pointer_default_on(self) -> None:
+        context = project_context.resolve_project_context(DBT_FIXTURES / "engine_fusion")
+
+        self.assertEqual(context.engine, "fusion")
+        self.assertTrue(context.latest_version_pointer_default)
+        self.assertEqual(context.pointer_default_evidence, "fusion default")
+
+    def test_an_unknown_engine_leaves_the_pointer_default_unknown(self) -> None:
+        context = project_context.resolve_project_context(DBT_FIXTURES / "engine_unknown")
+
+        self.assertEqual(context.engine, "unknown")
+        self.assertIsNone(
+            context.latest_version_pointer_default,
+            "coercing this to false would invent a published relation's absence",
+        )
+        index = resource_identity.build_index(context)
+        latest = next(
+            item for item in index.resources if item.path == "models/orders_v2.sql"
+        )
+        self.assertEqual(
+            [(item.enabled, item.evidence) for item in latest.interfaces],
+            [(None, "engine unknown")],
+        )
+
+    def test_a_human_declared_engine_outranks_dependency_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            shutil.copytree(DBT_FIXTURES / "engine_core", root)
+            (root / ".ae").mkdir()
+            (root / ".ae" / "project.yml").write_text("engine: fusion\n", encoding="utf-8")
+            context = project_context.resolve_project_context(root)
+
+        self.assertEqual(context.engine, "fusion")
+        self.assertIn(".ae/project.yml", context.engine_evidence)
+        self.assertTrue(context.latest_version_pointer_default)
+
+    def test_an_explicit_project_flag_outranks_the_engine_default(self) -> None:
+        context = project_context.resolve_project_context(
+            DBT_FIXTURES / "versioned_models"
+        )
+
+        self.assertTrue(context.latest_version_pointer_default)
+        self.assertEqual(context.pointer_default_evidence, "project flag")
+
+    def test_functions_are_typed_resources_under_their_configured_path(self) -> None:
+        context = project_context.resolve_project_context(DBT_FIXTURES / "functions")
+        index = resource_identity.build_index(context)
+        functions = {
+            resource.path: resource
+            for resource in index.by_type(resource_identity.FUNCTION)
+            if resource.path
+        }
+
+        self.assertEqual(
+            functions["functions/cents_to_dollars.sql"].language,
+            resource_identity.SQL,
+        )
+        self.assertEqual(
+            functions["functions/normalize_email.js"].language,
+            resource_identity.JAVASCRIPT,
+        )
+        self.assertEqual(
+            functions["functions/order_total.py"].language,
+            resource_identity.PYTHON,
+        )
+
+    def test_two_overloads_share_one_dag_identity(self) -> None:
+        context = project_context.resolve_project_context(DBT_FIXTURES / "functions")
+        index = resource_identity.build_index(context)
+        overloads = [
+            resource
+            for resource in index.by_type(resource_identity.FUNCTION)
+            if resource.name == "cents_to_dollars"
+        ]
+
+        self.assertGreaterEqual(len(overloads), 2, "each definition is its own file")
+        self.assertEqual({resource.selector() for resource in overloads}, {"cents_to_dollars"})
+        signatures = {
+            resource.signature for resource in overloads if resource.signature
+        }
+        self.assertEqual(
+            signatures,
+            {"cents_to_dollars(bigint) -> numeric", "cents_to_dollars(numeric) -> numeric"},
+        )
+
+    def test_a_changed_function_gets_a_bounded_operation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = committed_copy(tmp, "functions")
+            definition = root / "functions" / "cents_to_dollars.sql"
+            definition.write_text(
+                definition.read_text(encoding="utf-8") + "\n-- changed\n", encoding="utf-8"
+            )
+            plan = planner.plan_validation(root, target="dev", intent="build")
+
+        build = next(
+            step for step in plan["validation_steps"] if step["operation"] == "model_validation"
+        )
+        self.assertEqual(build["selectors"], ["cents_to_dollars"])
+
+    def test_a_deleted_function_says_its_callers_cannot_be_proven(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = committed_copy(tmp, "functions")
+            (root / "functions" / "normalize_email.js").unlink()
+            plan = planner.plan_validation(root, target="dev", intent="build")
+
+        deletion = plan["scope"]["unresolvable_deletions"][0]
+        self.assertEqual(deletion["resource_type"], "function")
+        self.assertEqual(deletion["name"], "normalize_email")
+        self.assertIn("arbitrary SQL", deletion["reason"])
 
 
 class GuardsAreLoadBearingTests(unittest.TestCase):
@@ -944,17 +1406,82 @@ class GuardsAreLoadBearingTests(unittest.TestCase):
             "the name patterns are the only thing suppressing this range",
         )
 
-    def test_without_the_unsupported_yaml_patterns_an_alias_parses_as_a_string(self) -> None:
-        text = (DBT_FIXTURES / "ambiguous_yaml" / "models" / "schema.yml").read_text(
+    def test_without_alias_resolution_a_freshness_contract_becomes_a_string(self) -> None:
+        text = (DBT_FIXTURES / "modern_yaml" / "models" / "schema.yml").read_text(
             encoding="utf-8"
         )
-        document = infer_conventions.parse_yaml(text)
-        orders = document["sources"][0]["tables"][0]
+        module = load_module("scripts/infer_conventions.py", "infer_conventions_mutation")
+        module.ALIAS_VALUE = re.compile(r"^(?!)$")
+        orders = module.parse_yaml(text)["sources"][0]["tables"][0]
 
         self.assertEqual(
             orders["freshness"],
             "*standard_freshness",
-            "the reader really does return a string here, which is why it must say so",
+            "declining to resolve the alias is what silently dropped the contract",
+        )
+
+    def test_without_merge_precedence_the_documents_own_key_loses(self) -> None:
+        text = (DBT_FIXTURES / "modern_yaml" / "models" / "schema.yml").read_text(
+            encoding="utf-8"
+        )
+        module = load_module("scripts/infer_conventions.py", "infer_conventions_merge")
+        original = module._parse_mapping
+
+        # Reverse the rule instead of removing it: apply merges over the
+        # explicit keys and the source's own six-hour threshold disappears.
+        def wrong_precedence(lines, indent, anchors):
+            explicit = original(lines, indent, anchors)
+            sources = [
+                value
+                for _, line in lines
+                if (match := module.KEY_LINE.match(line))
+                and match.group(1).strip() == "<<"
+                for value in module._merge_sources((match.group(2) or "").strip(), anchors)
+            ]
+            for source in sources:
+                explicit.update(source)
+            return explicit
+
+        module._parse_mapping = wrong_precedence
+        try:
+            document = module.parse_yaml(text)
+        finally:
+            module._parse_mapping = original
+        freshness = document["sources"][0]["tables"][2]["freshness"]
+
+        self.assertEqual(
+            freshness["error_after"],
+            {"count": 24, "period": "hour"},
+            "letting a merged mapping win is what discarded the declared 6 hours",
+        )
+
+    def test_without_the_single_empty_array_rule_no_rows_becomes_one_row(self) -> None:
+        module = load_module("scripts/profile_dataset.py", "profile_dataset_empty")
+        original = module._records_from_json
+
+        def ignore_single_empty(value, record_path, notes):
+            if isinstance(value, dict) and not record_path:
+                return [value]
+            return original(value, record_path, notes)
+
+        module._records_from_json = ignore_single_empty
+        report = module.profile_dataset(FIXTURES / "data" / "single_empty_array.json")
+
+        self.assertEqual(
+            report["row_count"],
+            1,
+            "profiling the wrapper is what invented a row the extract never returned",
+        )
+        self.assertIn("generated_at", [column["name"] for column in report["columns"]])
+
+    def test_without_engine_awareness_an_unknown_pointer_reads_as_absent(self) -> None:
+        context = project_context.resolve_project_context(DBT_FIXTURES / "engine_unknown")
+
+        self.assertIsNone(context.latest_version_pointer_default)
+        self.assertIs(
+            bool(context.latest_version_pointer_default),
+            False,
+            "collapsing the third state to a boolean is what asserted no pointer exists",
         )
 
     def test_without_the_version_in_the_key_two_versions_become_one_resource(self) -> None:
@@ -1029,6 +1556,50 @@ class GuardsAreLoadBearingTests(unittest.TestCase):
             planner.operation_verb("test", "build"),
             "test",
             "a broader request does not promote a test operation into a build",
+        )
+
+    def test_without_version_level_yaml_diffing_one_edit_obliges_every_version(self) -> None:
+        """The defect this replaced: the diff compared whole `models:` entries."""
+        before = {
+            "models": [
+                {"name": "orders", "versions": [{"v": 1}, {"v": 2}]},
+            ]
+        }
+        current = {
+            "models": [
+                {
+                    "name": "orders",
+                    "versions": [{"v": 1, "columns": [{"name": "amount"}]}, {"v": 2}],
+                }
+            ]
+        }
+
+        self.assertEqual(
+            [ref.selector() for ref in planner._changed_model_refs(before, current)],
+            ["orders.v1"],
+        )
+        self.assertEqual(
+            planner._changed_model_names(before, current),
+            ["orders"],
+            "the bare-name view is what used to reach both versions",
+        )
+
+    def test_without_typed_consumers_a_source_change_selects_every_version(self) -> None:
+        context = project_context.resolve_project_context(
+            DBT_FIXTURES / "versioned_models"
+        )
+        index = resource_identity.build_index(context)
+        consumers = planner._source_consumers(
+            index, [{"source": "raw", "table": "payments"}]
+        )
+
+        self.assertEqual(
+            [item.selector() for item in consumers], ["customer_lifetime", "orders.v1"]
+        )
+        self.assertEqual(
+            sorted({item.name for item in consumers}),
+            ["customer_lifetime", "orders"],
+            "flattening to names is what put every version of orders back in scope",
         )
 
 

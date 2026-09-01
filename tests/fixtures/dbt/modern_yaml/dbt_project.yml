@@ -1,4 +1,4 @@
-name: ambiguous_yaml
+name: modern_yaml
 version: '1.0'
 config-version: 2
 model-paths: [models]

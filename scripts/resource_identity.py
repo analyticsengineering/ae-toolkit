@@ -29,15 +29,20 @@ EXPOSURE = "exposure"
 SEMANTIC_MODEL = "semantic_model"
 METRIC = "metric"
 SAVED_QUERY = "saved_query"
+FUNCTION = "function"
 
 SQL = "sql"
 PYTHON = "python"
+JAVASCRIPT = "javascript"
 
 # Resource types dbt selects by bare name. Everything else carries a prefix
 # (`source:`, `unit_test:`) and so cannot collide with these.
-BARE_NAME_TYPES = frozenset({MODEL, SEED, SNAPSHOT, ANALYSIS, SINGULAR_TEST})
+BARE_NAME_TYPES = frozenset({MODEL, SEED, SNAPSHOT, ANALYSIS, SINGULAR_TEST, FUNCTION})
 
 MODEL_SUFFIXES = {".sql": SQL, ".py": PYTHON}
+# dbt's first-class function resources can also be JavaScript UDFs, which no
+# other resource type accepts.
+FUNCTION_SUFFIXES = {".sql": SQL, ".py": PYTHON, ".js": JAVASCRIPT}
 
 # A generic test is a macro named `test_*` or declared with `{% test %}`. Only
 # the latter is unambiguous, so both are recognized but reported distinctly.
@@ -60,7 +65,13 @@ SOURCE_CALL = re.compile(
         (?P<table>['"][^'"]+['"])\s*\)""",
     re.I | re.X,
 )
-VERSION_KWARG = re.compile(r"\b(?:version|v)\s*=\s*['\"]?([\w.]+)['\"]?", re.I)
+# dbt accepts any string as a version identifier, so `2026-q3` and `release/2`
+# are legitimate. A `[\w.]+` pattern silently truncated them to `2026`.
+VERSION_KWARG = re.compile(
+    r"""\b(?:version|v)\s*=\s*
+        (?:'(?P<single>[^']*)'|"(?P<double>[^"]*)"|(?P<bare>[\w.+-]+))""",
+    re.I | re.X,
+)
 
 # dbt creates a view named after a versioned model's base name that points at
 # whichever version is current. It is a published physical interface, not
@@ -97,7 +108,7 @@ class PublishedInterface:
 
     kind: str
     name: str
-    enabled: bool
+    enabled: bool | None
     evidence: str
 
     def as_dict(self) -> dict[str, Any]:
@@ -109,12 +120,61 @@ class PublishedInterface:
         }
 
 
+def _version_group(match: re.Match[str] | None) -> str | None:
+    if match is None:
+        return None
+    for group in ("single", "double", "bare"):
+        value = match.group(group)
+        if value:
+            return value
+    return None
+
+
+def version_is_numeric(value: Any) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _version_precedes(left: Any, right: Any) -> bool:
+    """dbt's own version comparison, reproduced exactly.
+
+    dbt tries a float comparison first and falls back to string comparison only
+    when a value will not convert, so a quoted `"10"` still outranks `"2"`.
+    Sorting the declared strings alphabetically would call `1` the latest of
+    `4, 3, 2, 1`.
+    """
+    try:
+        return float(left) < float(right)
+    except (TypeError, ValueError):
+        return str(left) < str(right)
+
+
 @dataclass(frozen=True)
 class VersionDeclaration:
     """One entry under a model's `versions:` list."""
 
     version: str
     defined_in: str | None = None
+    raw: Any = None
+    is_numeric: bool = True
+
+    @property
+    def compare_value(self) -> Any:
+        return self.raw if self.raw is not None else self.version
+
+
+def latest_declared_version(
+    versions: Sequence[VersionDeclaration],
+) -> VersionDeclaration | None:
+    """The implicit latest version, resolved the way dbt's `max()` resolves it."""
+    winner: VersionDeclaration | None = None
+    for entry in versions:
+        if winner is None or _version_precedes(winner.compare_value, entry.compare_value):
+            winner = entry
+    return winner
 
 
 @dataclass
@@ -131,10 +191,10 @@ class ModelDeclaration:
     def resolved_latest(self) -> str | None:
         if self.latest_version is not None:
             return self.latest_version
-        if not self.versions:
-            return None
-        # dbt treats the highest declared version as latest when none is named.
-        return self.versions[-1].version
+        # dbt treats the highest declared version as latest when none is named,
+        # and "highest" is its own comparison, not declaration order.
+        winner = latest_declared_version(self.versions)
+        return winner.version if winner else None
 
     def file_stems(self) -> dict[str, VersionDeclaration]:
         """Map each file stem dbt would look for to the version it defines."""
@@ -208,6 +268,8 @@ class Resource:
     is_latest_version: bool = False
     interfaces: tuple[PublishedInterface, ...] = ()
     identity_evidence: str = "filename"
+    prior_latest_version: str | None = None
+    signature: str | None = None
 
     @property
     def key(self) -> tuple[str, str, str | None, str | None]:
@@ -306,6 +368,10 @@ class Resource:
         if self.version:
             payload["is_latest_version"] = self.is_latest_version
             payload["identity_evidence"] = self.identity_evidence
+        if self.prior_latest_version:
+            payload["prior_latest_version"] = self.prior_latest_version
+        if self.signature:
+            payload["signature"] = self.signature
         if self.interfaces:
             payload["interfaces"] = [item.as_dict() for item in self.interfaces]
         if self.attached_to:
@@ -338,7 +404,7 @@ def _parse_refs_regex(text: str) -> tuple[ResourceRef, ...]:
         version_match = VERSION_KWARG.search(rest) or VERSION_KWARG.search(
             match.group("second") or ""
         )
-        version = version_match.group(1) if version_match else None
+        version = _version_group(version_match)
         ref = ResourceRef(MODEL, name, package=package, version=version)
         if ref.key + (version,) not in seen:
             seen.add(ref.key + (version,))
@@ -496,12 +562,18 @@ def model_declarations(document: Any, relative: str) -> list[ModelDeclaration]:
         for item in entry.get("versions") or []:
             if not isinstance(item, dict):
                 continue
-            version = version_text(item.get("v"))
+            raw = item.get("v")
+            version = version_text(raw)
             if version is None:
                 continue
             defined_in = item.get("defined_in")
             versions.append(
-                VersionDeclaration(version, str(defined_in) if defined_in else None)
+                VersionDeclaration(
+                    version,
+                    str(defined_in) if defined_in else None,
+                    raw=raw,
+                    is_numeric=version_is_numeric(raw),
+                )
             )
         pointer_enabled, pointer_alias = _pointer_config(entry)
         declarations.append(
@@ -533,12 +605,16 @@ def _pointer_config(entry: dict[str, Any]) -> tuple[bool | None, str | None]:
 
 
 class ModelRegistry:
-    """Resolve a model file to the identity YAML and the manifest agree on.
+    """Resolve a model file to the identity the working tree declares.
 
-    Order matters. The manifest is what dbt itself built, YAML is what the team
-    declared, and the filename is a guess. Reading them in that order is what
-    lets `orders_current_rebuild.sql` be version `2026_q3` of `orders` instead
-    of a model nobody references.
+    Order matters, and it is not the order it first appears to be. The manifest
+    is what dbt built *last time*; when someone is validating an edit, it
+    describes the graph before that edit. So the current YAML declaration wins,
+    the current filename is the fallback guess, and the manifest corroborates
+    with things only dbt can supply, such as `unique_id`. That is what lets
+    `orders_current_rebuild.sql` be version `2026_q3` of `orders` while a
+    yesterday's manifest still claiming `latest_version: 1` cannot veto a
+    working tree that now says `2`.
     """
 
     def __init__(
@@ -547,10 +623,12 @@ class ModelRegistry:
         declarations: Sequence[ModelDeclaration] = (),
         manifest: Any = None,
         project: str | None = None,
-        pointer_default: bool = False,
+        pointer_default: bool | None = False,
+        pointer_evidence: str = "project default",
     ) -> None:
         self.project = project
         self.pointer_default = pointer_default
+        self.pointer_evidence = pointer_evidence
         self.declarations = list(declarations)
         self._by_stem: dict[str, tuple[ModelDeclaration, VersionDeclaration]] = {}
         for declaration in self.declarations:
@@ -561,22 +639,7 @@ class ModelRegistry:
     def identify(self, relative: str) -> dict[str, Any]:
         """Return the name, version, and provenance for one model file."""
         stem = Path(relative).stem
-
         node = self._by_path.get(relative)
-        if node is not None:
-            name = str(node.get("name") or stem)
-            version = version_text(node.get("version"))
-            latest = version_text(node.get("latest_version"))
-            declared = self._by_stem.get(stem)
-            return {
-                "name": name,
-                "version": version,
-                "defined_in": declared[1].defined_in if declared else None,
-                "is_latest_version": bool(version and latest == version),
-                "unique_id": str(node.get("unique_id")) if node.get("unique_id") else None,
-                "evidence": "manifest",
-                "interfaces": self._interfaces(name, version, latest),
-            }
 
         declared = self._by_stem.get(stem)
         if declared is not None:
@@ -587,14 +650,30 @@ class ModelRegistry:
                 "version": entry.version,
                 "defined_in": entry.defined_in,
                 "is_latest_version": entry.version == latest,
-                "unique_id": None,
+                "unique_id": self._corroborated_id(node, declaration.name, entry.version),
                 "evidence": "yaml",
+                "prior_latest_version": self._manifest_latest(node, declaration.name, latest),
                 "interfaces": self._interfaces(
                     declaration.name,
                     entry.version,
                     latest,
                     declaration=declaration,
                 ),
+            }
+
+        if node is not None:
+            name = str(node.get("name") or stem)
+            version = version_text(node.get("version"))
+            latest = version_text(node.get("latest_version"))
+            return {
+                "name": name,
+                "version": version,
+                "defined_in": None,
+                "is_latest_version": bool(version and latest == version),
+                "unique_id": str(node.get("unique_id")) if node.get("unique_id") else None,
+                "evidence": "manifest",
+                "prior_latest_version": None,
+                "interfaces": self._interfaces(name, version, latest),
             }
 
         name, version = parse_versioned_model_name(stem)
@@ -606,8 +685,32 @@ class ModelRegistry:
             "is_latest_version": bool(version),
             "unique_id": None,
             "evidence": "filename",
+            "prior_latest_version": None,
             "interfaces": (),
         }
+
+    def _corroborated_id(
+        self, node: dict[str, Any] | None, name: str, version: str | None
+    ) -> str | None:
+        """A manifest `unique_id`, but only when it describes the same resource."""
+        if not node or not node.get("unique_id"):
+            return None
+        if str(node.get("name") or "") != name:
+            return None
+        if version_text(node.get("version")) != version:
+            return None
+        return str(node["unique_id"])
+
+    def _manifest_latest(
+        self, node: dict[str, Any] | None, name: str, current_latest: str | None
+    ) -> str | None:
+        """What the last build thought was latest, when the tree has moved on."""
+        if not node:
+            return None
+        previous = version_text(node.get("latest_version"))
+        if previous is None or previous == current_latest:
+            return None
+        return previous
 
     def _interfaces(
         self,
@@ -626,11 +729,9 @@ class ModelRegistry:
         evidence = "model config"
         if enabled is None:
             enabled = self.pointer_default
-            evidence = "project flag" if self.pointer_default else "project default"
+            evidence = self.pointer_evidence
         alias = (source.pointer_alias if source else None) or name
-        return (
-            PublishedInterface(LATEST_VERSION_POINTER, alias, bool(enabled), evidence),
-        )
+        return (PublishedInterface(LATEST_VERSION_POINTER, alias, enabled, evidence),)
 
 
 def _manifest_models_by_path(manifest: Any) -> dict[str, dict[str, Any]]:
@@ -728,6 +829,7 @@ def resource_for_path(
             is_latest_version=identity["is_latest_version"],
             interfaces=tuple(identity["interfaces"]),
             identity_evidence=identity["evidence"],
+            prior_latest_version=identity.get("prior_latest_version"),
         )
     if kind == "test" and suffix == ".sql":
         return Resource(
@@ -766,6 +868,17 @@ def resource_for_path(
             package=package,
             language=MODEL_SUFFIXES[suffix],
             refs=parse_refs(text, language=MODEL_SUFFIXES[suffix]) if text else (),
+        )
+    if kind == "function" and suffix in FUNCTION_SUFFIXES:
+        language = FUNCTION_SUFFIXES[suffix]
+        return Resource(
+            FUNCTION,
+            Path(relative).stem,
+            path=relative,
+            package=package,
+            language=language,
+            # A JavaScript UDF body is not Jinja, so it declares no refs.
+            refs=parse_refs(text, language=language) if text and language != JAVASCRIPT else (),
         )
     if kind == "macro" and suffix == ".sql":
         generic, _macros = macro_definitions(text or "")
@@ -902,7 +1015,8 @@ def build_index(context: Any) -> ResourceIndex:
         declarations=declarations,
         manifest=manifest,
         project=layout.name,
-        pointer_default=bool(getattr(context, "latest_version_pointer_default", False)),
+        pointer_default=getattr(context, "latest_version_pointer_default", False),
+        pointer_evidence=getattr(context, "pointer_default_evidence", "project default"),
     )
 
     for path in context.iter_files():
@@ -910,6 +1024,12 @@ def build_index(context: Any) -> ResourceIndex:
         if not layout.is_own_code(relative):
             continue
         suffix = path.suffix.lower()
+        if suffix == ".js":
+            if layout.kind_of(relative) == "function":
+                resource = resource_for_path(context, relative, text=_safe_read(path))
+                if resource is not None:
+                    index.add(resource)
+            continue
         if suffix in {".sql", ".py"}:
             text = _safe_read(path)
             resource = resource_for_path(context, relative, text=text, registry=index.registry)
@@ -1004,6 +1124,22 @@ def _index_yaml(index: ResourceIndex, relative: str, document: Any, package: str
                 index.add(
                     Resource(resource_type, str(entry["name"]), path=relative, package=package)
                 )
+    for function in document.get("functions") or []:
+        if not isinstance(function, dict) or not function.get("name"):
+            continue
+        name = str(function["name"])
+        defined_in = function.get("defined_in")
+        index.add(
+            Resource(
+                FUNCTION,
+                name,
+                path=relative,
+                package=package,
+                definition="yaml",
+                defined_in=str(defined_in) if defined_in else None,
+                signature=function_signature(name, function),
+            )
+        )
     for model in document.get("models") or []:
         if not isinstance(model, dict) or not model.get("name"):
             continue
@@ -1011,6 +1147,32 @@ def _index_yaml(index: ResourceIndex, relative: str, document: Any, package: str
             index.generic_test_usages.setdefault(test_name, []).append(
                 ResourceRef(MODEL, str(model["name"]))
             )
+
+
+def function_signature(name: str, entry: dict[str, Any]) -> str | None:
+    """Render a declared function's arguments and return type.
+
+    Two overloads of one function share a DAG identity but not a signature, so
+    the signature is what tells a reader which definition changed.
+    """
+    arguments = entry.get("arguments")
+    if not isinstance(arguments, list):
+        arguments = []
+    rendered = [
+        str(argument.get("data_type") or argument.get("type") or "?")
+        for argument in arguments
+        if isinstance(argument, dict)
+    ]
+    returns = entry.get("returns")
+    returned = None
+    if isinstance(returns, dict):
+        returned = returns.get("data_type") or returns.get("type")
+    elif isinstance(returns, str):
+        returned = returns
+    if not rendered and returned is None:
+        return None
+    suffix = f" -> {returned}" if returned else ""
+    return f"{name}({', '.join(rendered)}){suffix}"
 
 
 def _generic_tests_in(node: Any) -> list[str]:

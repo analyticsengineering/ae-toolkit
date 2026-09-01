@@ -109,8 +109,10 @@ def interpret_source_freshness(sources: str | Path) -> dict[str, Any]:
     if not path.is_file():
         return {
             "present": False,
+            "valid": False,
             "path": str(path),
             "status": "unknown",
+            "metadata": {},
             "results": [],
         }
     try:
@@ -118,17 +120,21 @@ def interpret_source_freshness(sources: str | Path) -> dict[str, Any]:
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return {
             "present": True,
+            "valid": False,
             "path": str(path),
             "status": "unknown",
             "error": str(exc),
+            "metadata": {},
             "results": [],
         }
     if not isinstance(document, dict):
         return {
             "present": True,
+            "valid": False,
             "path": str(path),
             "status": "unknown",
             "error": "sources.json root is not an object",
+            "metadata": {},
             "results": [],
         }
 
@@ -169,10 +175,12 @@ def interpret_source_freshness(sources: str | Path) -> dict[str, Any]:
         status = "unknown"
     return {
         "present": True,
+        "valid": True,
         "path": str(path),
         "status": status,
         "generated_at": metadata.get("generated_at"),
         "dbt_version": metadata.get("dbt_version"),
+        "metadata": artifact_inventory.artifact_metadata(document),
         "result_count": len(results),
         "stale_sources": [
             item["selector"] for item in results if item["status"] in {"warn", "error"}
@@ -181,54 +189,56 @@ def interpret_source_freshness(sources: str | Path) -> dict[str, Any]:
     }
 
 
-def _correlate(
+def invocation_id_from_log(log_path: str | Path) -> str | None:
+    """Read back the invocation ID dbt chose for a run.
+
+    dbt generates `invocation_id` itself and documents no flag or environment
+    variable to set it, so the only way to hold an artifact to an exact command
+    is to run that command with JSON logging and recover the ID it recorded.
+    """
+    path = Path(log_path).expanduser()
+    if path.is_dir():
+        path = path / "dbt.log"
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        for holder in (event.get("info"), event.get("data"), event):
+            if isinstance(holder, dict) and holder.get("invocation_id"):
+                return str(holder["invocation_id"])
+    match = re.search(r'"invocation_id"\s*:\s*"([^"]+)"', text)
+    return match.group(1) if match else None
+
+
+def _evidence(
+    kind: str,
+    path: str | Path | None,
     metadata: dict[str, Any],
     *,
     since: str | None,
     invocation_id: str | None,
-) -> dict[str, Any]:
-    """Decide whether this artifact was written by the command that just ran.
-
-    An interpreter that says "verified" while reading yesterday's
-    `run_results.json` is worse than one that says nothing: it retires a real
-    obligation on the strength of an unrelated file.
-    """
-    generated_at = metadata.get("generated_at")
-    report: dict[str, Any] = {
-        "generated_at": generated_at,
-        "invocation_id": metadata.get("invocation_id"),
-        "correlated": None,
-        "reason": None,
-    }
-    if invocation_id:
-        matched = metadata.get("invocation_id") == invocation_id
-        report["correlated"] = matched
-        report["reason"] = (
-            "The artifact records the expected invocation."
-            if matched
-            else "The artifact was written by a different dbt invocation."
-        )
-        return report
-    if since:
-        boundary = artifact_inventory.parse_moment(since)
-        written = artifact_inventory.parse_moment(generated_at)
-        if boundary is None or written is None:
-            report["correlated"] = False
-            report["reason"] = "The artifact carries no comparable generation time."
-            return report
-        matched = written > boundary
-        report["correlated"] = matched
-        report["reason"] = (
-            "The artifact was written after the command started."
-            if matched
-            else "The artifact predates the command, so it describes an earlier run."
-        )
-        return report
-    report["reason"] = (
-        "No expected invocation or start time was supplied, so the artifact "
-        "cannot be tied to a specific command."
+) -> artifact_inventory.ArtifactEvidence:
+    """Judge one artifact's provenance through the one shared rule."""
+    correlated, reason = artifact_inventory.correlate(
+        metadata, since=since, invocation_id=invocation_id
     )
-    return report
+    return artifact_inventory.ArtifactEvidence(
+        kind=kind,
+        path=Path(path) if path is not None else None,
+        metadata=metadata,
+        correlated=correlated,
+        reason=reason,
+    )
 
 
 def interpret_results(
@@ -246,7 +256,7 @@ def interpret_results(
     metadata: dict[str, Any] = {}
     node_statuses: list[str] = []
     batches: list[dict[str, Any]] = []
-    provenance: dict[str, Any] | None = None
+    evidence: dict[str, artifact_inventory.ArtifactEvidence] = {}
 
     if run_results is not None:
         path = Path(run_results).expanduser().resolve()
@@ -260,8 +270,12 @@ def interpret_results(
                 artifact_valid = isinstance(document, dict)
                 if artifact_valid:
                     metadata.update(artifact_inventory.artifact_metadata(document))
-                    provenance = _correlate(
-                        metadata, since=since, invocation_id=invocation_id
+                    evidence["run_results"] = _evidence(
+                        "run_results",
+                        path,
+                        dict(metadata),
+                        since=since,
+                        invocation_id=invocation_id,
                     )
                     for result in document.get("results", []):
                         if not isinstance(result, dict):
@@ -314,6 +328,15 @@ def interpret_results(
                 node_statuses.append("failed")
 
     freshness = interpret_source_freshness(sources) if sources is not None else None
+    if freshness is not None and freshness.get("valid"):
+        evidence["sources"] = _evidence(
+            "sources",
+            freshness.get("path"),
+            dict(freshness.get("metadata") or {}),
+            since=since,
+            invocation_id=invocation_id,
+        )
+        freshness["provenance"] = evidence["sources"].as_dict()
 
     status = _overall_status(node_statuses, artifact_valid)
     mismatch = _provenance_mismatch(run_results, sources, metadata)
@@ -326,14 +349,25 @@ def interpret_results(
     warnings = [item for item in findings if item["reading"] == "warned"]
     partial = [item for item in findings if item["reading"] == "partial"]
 
-    result: dict[str, Any] = {
-        "ok": True,
-        "status": status,
-        "artifact": {
+    if run_results is None and freshness is not None:
+        artifact_block = {
+            "kind": "sources",
+            "present": bool(freshness.get("present")),
+            "valid": bool(freshness.get("valid")),
+            **(freshness.get("metadata") or {}),
+        }
+    else:
+        artifact_block = {
+            "kind": "run_results",
             "present": artifact_present,
             "valid": artifact_valid,
             **metadata,
-        },
+        }
+
+    result: dict[str, Any] = {
+        "ok": True,
+        "status": status,
+        "artifact": artifact_block,
         "failure_count": len(failures),
         "failures": failures,
         "warning_count": len(warnings),
@@ -343,14 +377,22 @@ def interpret_results(
     if partial:
         result["partial"] = partial
     if expected_operation:
-        result["expected_operation"] = expected_operation
         expected_kind = artifact_inventory.OPERATION_ARTIFACTS.get(expected_operation)
+        result["expected_operation"] = expected_operation
         result["expected_artifact"] = expected_kind
-    if provenance is not None:
-        result["provenance"] = provenance
-    result["verified"] = bool(
-        artifact_valid and provenance is not None and provenance.get("correlated")
-    )
+    else:
+        expected_kind = "run_results" if run_results is not None else (
+            "sources" if sources is not None else None
+        )
+    proof = evidence.get(expected_kind) if expected_kind else None
+    if evidence:
+        result["evidence"] = {kind: item.as_dict() for kind, item in sorted(evidence.items())}
+    if proof is not None:
+        result["provenance"] = proof.as_dict()
+    # Proving the artifact is current is a claim about the file, not about the
+    # change. Freshness now earns it through the same rule run-results does.
+    result["artifact_verified"] = bool(proof is not None and proof.correlated)
+    result["verified"] = result["artifact_verified"]
     if batches:
         result["batches"] = batches
     if mismatch:
@@ -432,6 +474,13 @@ def _parser() -> argparse.ArgumentParser:
         "--invocation-id",
         help="The dbt invocation ID the artifact must record",
     )
+    parser.add_argument(
+        "--invocation-log",
+        help=(
+            "A JSON dbt log directory or file from the command that just ran; "
+            "the invocation ID is read from it"
+        ),
+    )
     parser.add_argument("--pretty", action="store_true", help="Indent JSON output")
     return parser
 
@@ -454,17 +503,11 @@ def _artifacts_from_project(
             f"No dbt project was resolved at {project_dir}"
         )
     inventory = artifact_inventory.inventory_artifacts(context)
-
-    def located(kind: str) -> str | None:
-        artifact = inventory.current.get(kind)
-        return str(artifact.path) if artifact and artifact.present else None
-
-    if expected_operation:
-        kind = artifact_inventory.OPERATION_ARTIFACTS.get(expected_operation)
-        if kind == "sources":
-            return None, located("sources")
-        return located("run_results"), None
-    return located("run_results"), located("sources")
+    resolved = inventory.resolve_operation_paths(expected_operation)
+    return (
+        str(resolved["run_results"]) if resolved["run_results"] else None,
+        str(resolved["sources"]) if resolved["sources"] else None,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -479,6 +522,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+
+    invocation_id = args.invocation_id
+    log_invocation_missing = False
+    if not invocation_id and args.invocation_log:
+        invocation_id = invocation_id_from_log(args.invocation_log)
+        log_invocation_missing = invocation_id is None
 
     run_results, sources = args.run_results, args.sources
     if args.project_dir:
@@ -501,8 +550,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         sources=sources,
         expected_operation=args.expect_operation,
         since=args.since,
-        invocation_id=args.invocation_id,
+        invocation_id=invocation_id,
     )
+    if log_invocation_missing:
+        result["invocation_log_note"] = (
+            "No invocation ID was found in the named dbt log, so correlation fell "
+            "back to the generation timestamp."
+        )
     print(json.dumps(result, indent=2 if args.pretty else None, sort_keys=args.pretty))
     return 0
 

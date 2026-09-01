@@ -1,0 +1,31 @@
+version: 2
+
+# The working tree has cut over to version 2. The committed manifest under
+# target/ still describes the world before that edit.
+models:
+  - name: orders
+    description: Customer orders at one row per order.
+    versions:
+      - v: 1
+      - v: 2
+
+  - name: shipments
+    description: Versions are declared out of order on purpose.
+    versions:
+      - v: 4
+      - v: 3
+      - v: 2
+      - v: 1
+
+  - name: invoices
+    description: Quoted numeric versions still compare numerically in dbt.
+    versions:
+      - v: "2"
+      - v: "10"
+
+  - name: forecasts
+    description: An arbitrary string version dbt accepts verbatim.
+    versions:
+      - v: 1
+      - v: 2026-q3
+        defined_in: forecasts_current

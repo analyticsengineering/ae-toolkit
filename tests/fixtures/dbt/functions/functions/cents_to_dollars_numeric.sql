@@ -1,0 +1,1 @@
+select cents / 100
