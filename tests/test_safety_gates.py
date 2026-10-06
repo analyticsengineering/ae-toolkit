@@ -119,6 +119,33 @@ class ShellSafetyGateTests(unittest.TestCase):
         finally:
             safety_gate.split_sql_statements = original
 
+    def test_ignoring_leading_assignments_recreates_the_bypass(self) -> None:
+        attack = "FOO=1 rm -rf build/"
+        self.assertEqual(safety_gate.classify(attack)["permission"], "deny")
+
+        original = safety_gate.ASSIGNMENT
+        safety_gate.ASSIGNMENT = safety_gate.re.compile(r"(?!)")
+        try:
+            self.assertEqual(safety_gate.classify(attack)["permission"], "allow")
+        finally:
+            safety_gate.ASSIGNMENT = original
+
+    def test_every_launch_spelling_reaches_the_same_dbt_decision(self) -> None:
+        """A launcher or alias that changes the decision is a way around the gate."""
+        plain = safety_gate.classify("dbt build --select fct_orders")
+        for wrapped in (
+            "dbtf build --select fct_orders",
+            "DBT build --select fct_orders",
+            "FOO=1 dbt build --select fct_orders",
+            "python3 -m dbt build --select fct_orders",
+            "uv run --with dbt-core dbt build --select fct_orders",
+            "pipx run dbt build --select fct_orders",
+            "conda run -n analytics dbt build --select fct_orders",
+            "timeout 600 dbt build --select fct_orders",
+        ):
+            with self.subTest(command=wrapped):
+                self.assertEqual(safety_gate.classify(wrapped), plain)
+
     def test_hook_entry_point_fails_closed_on_malformed_input(self) -> None:
         result = run_python("hooks/safety_gate.py", stdin="{not json")
         self.assertEqual(result.returncode, 0)

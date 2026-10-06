@@ -27,13 +27,17 @@ DB_CLIENT = re.compile(
     re.IGNORECASE,
 )
 # `clone` writes nodes into a target schema and `retry` re-executes the previous
-# invocation, so both reach a warehouse exactly as `run` does.
+# invocation, so both reach a warehouse exactly as `run` does. dbt v2's
+# `freshness` queries every source and model with a freshness config.
 DBT_EXECUTION = re.compile(
     r"\bdbt\b[^;&|]*?\b(?:run|build|test|snapshot|seed|run-operation|compile|show|debug|"
-    r"clone|retry)\b"
+    r"clone|retry|freshness)\b"
     r"|\bdbt\b[^;&|]*?\b(?:docs\s+generate|source\s+freshness)\b",
     re.IGNORECASE,
 )
+DBT_LOGIN = re.compile(r"\bdbt\b[^;&|]*?\blogin\b", re.IGNORECASE)
+# dbt v2 installs as `dbt` and also answers to `dbtf` where v1 shares the PATH.
+DBT_PROGRAMS = {"dbt", "dbtf"}
 DBT_DEPENDENCIES = re.compile(r"\bdbt\b[^;&|]*?\bdeps\b", re.IGNORECASE)
 DBT_FULL_REFRESH = re.compile(
     r"\bdbt\b[^;&|]*?\b(?:run|build|clone)\b[^;&|]*--full-refresh\b",
@@ -50,6 +54,18 @@ DB_DESTRUCTIVE = re.compile(
 )
 SHELL_WRAPPERS = {"bash", "dash", "sh", "zsh", "ksh", "fish"}
 COMMAND_PREFIXES = {"command", "sudo", "doas", "nice", "nohup", "time", "xargs"}
+# `FOO=1 rm -rf x` runs `rm`; the assignment only sets its environment. Read as
+# the executable, it hid every command behind it from every check.
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# Tools that run a program named somewhere among their own arguments. Their
+# options differ too much to model one by one, so the launched program is found
+# by recognizing its name rather than by skipping a known number of tokens.
+LAUNCHERS = {
+    "uv", "uvx", "poetry", "pipx", "pdm", "hatch", "rye", "pixi", "pipenv",
+    "conda", "mamba", "micromamba", "npx", "bunx", "pnpm", "yarn",
+    "exec", "timeout", "watch", "stdbuf", "ionice", "taskset", "caffeinate", "flock",
+}
+PYTHON = re.compile(r"python(?:\d+(?:\.\d+)?)?")
 
 # Options that consume the next token. Skipping the option but not its value
 # left the value looking like the executable, so `sudo -u postgres psql` was
@@ -122,11 +138,72 @@ def _substituted_commands(command: str) -> list[str]:
     return found
 
 
+def _program(token: str) -> str:
+    """The name a shell would resolve, compared the way the filesystem compares it.
+
+    The default macOS and Windows filesystems are case-insensitive, so `DBT run`
+    and `RM -rf` launch the same binaries as their lowercase spellings.
+    """
+    name = re.split(r"[\\/]", token)[-1].lower()
+    for suffix in (".exe", ".cmd", ".bat"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _is_governed_program(token: str) -> bool:
+    name = _program(token)
+    return (
+        name in DBT_PROGRAMS
+        or name in SHELL_WRAPPERS
+        or name in {"rm", "git"}
+        or bool(DB_CLIENT.fullmatch(name))
+        or bool(PYTHON.fullmatch(name))
+    )
+
+
+def _python_module(tokens: list[str]) -> list[str] | None:
+    """`python -m dbt ...` as the dbt command it runs, or None for anything else."""
+    for index, token in enumerate(tokens[1:], start=1):
+        if token == "-m" and index + 1 < len(tokens):
+            module, rest = tokens[index + 1], tokens[index + 2 :]
+        elif token.startswith("-m") and len(token) > 2:
+            module, rest = token[2:], tokens[index + 1 :]
+        else:
+            continue
+        if module.split(".")[0].lower() == "dbt":
+            return ["dbt", *rest]
+        return None
+    return None
+
+
 def _command_tokens(tokens: list[str]) -> list[str]:
     """Strip common non-semantic launch prefixes."""
     index = 0
     while index < len(tokens):
-        name = Path(tokens[index]).name
+        if ASSIGNMENT.match(tokens[index]):
+            index += 1
+            continue
+        name = _program(tokens[index])
+        if name in LAUNCHERS:
+            launched = next(
+                (
+                    position
+                    for position in range(index + 1, len(tokens))
+                    if not tokens[position].startswith("-")
+                    and _is_governed_program(tokens[position])
+                ),
+                None,
+            )
+            if launched is None:
+                break
+            index = launched
+            continue
+        if PYTHON.fullmatch(name):
+            module = _python_module(tokens[index:])
+            if module is not None:
+                return module
+            break
         if name in COMMAND_PREFIXES or name == "env":
             value_options = VALUE_OPTIONS.get(name, set())
             index += 1
@@ -142,9 +219,6 @@ def _command_tokens(tokens: list[str]) -> list[str]:
                     index += 1
                     continue
                 break
-            continue
-        if name in {"uv", "poetry"} and index + 1 < len(tokens) and tokens[index + 1] == "run":
-            index += 2
             continue
         break
     return tokens[index:]
@@ -255,7 +329,7 @@ def _destructive_command(tokens: list[str]) -> str | None:
     tokens = _command_tokens(tokens)
     if not tokens:
         return None
-    executable = Path(tokens[0]).name
+    executable = _program(tokens[0])
     arguments = tokens[1:]
 
     if executable in SHELL_WRAPPERS:
@@ -509,7 +583,7 @@ def classify(command: str) -> dict[str, str]:
 
     for segment in segments:
         tokens = _command_tokens(segment)
-        if not tokens or Path(tokens[0]).name not in SHELL_WRAPPERS:
+        if not tokens or _program(tokens[0]) not in SHELL_WRAPPERS:
             continue
         script = _shell_script(tokens[1:])
         if script is None:
@@ -539,15 +613,16 @@ def classify(command: str) -> dict[str, str]:
         for tokens in (_command_tokens(segment) for segment in segments)
         if tokens
     ]
+    # Spelled `dbt` so one set of patterns governs every name the binary answers to.
     dbt_segments = [
-        shlex.join(tokens)
+        shlex.join(["dbt", *tokens[1:]])
         for tokens in executable_segments
-        if Path(tokens[0]).name == "dbt"
+        if _program(tokens[0]) in DBT_PROGRAMS
     ]
     database_clients = [
         tokens
         for tokens in executable_segments
-        if DB_CLIENT.fullmatch(Path(tokens[0]).name)
+        if DB_CLIENT.fullmatch(_program(tokens[0]))
     ]
     # The SQL a client was handed, with comments removed. Searching the raw
     # command line instead denied `select 1 -- ; drop table orders`, which is one
@@ -642,6 +717,14 @@ def classify(command: str) -> dict[str, str]:
             "This command installs or updates dbt packages in the workspace.",
             "Run dbt deps only after reviewing package and lock-file changes.",
             "dbt-dependency-install",
+        )
+
+    if any(DBT_LOGIN.search(segment) for segment in dbt_segments):
+        return decision(
+            "ask",
+            "This command signs in to dbt platform through a browser and stores credentials locally.",
+            "Run dbt login only when the user asks to authenticate with dbt platform.",
+            "dbt-platform-login",
         )
 
     if any(DBT_EXECUTION.search(segment) for segment in dbt_segments):

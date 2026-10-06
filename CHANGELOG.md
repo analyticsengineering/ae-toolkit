@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-10
+
+### Security
+
+- A command prefixed with an environment assignment is classified as the command it runs. `FOO=1 rm -rf build/`, `FOO=1 git push --force`, and `FOO=1 psql -c 'drop table orders'` were read as a program named `FOO=1` and allowed; they are now denied exactly as their unprefixed forms are. Upgrade if you rely on the shell gate.
+- dbt is recognized however it is launched. `dbtf`, the name dbt v2 answers to beside v1, `python -m dbt`, mixed-case spellings that a case-insensitive filesystem resolves to the same binary, and runners such as `uvx`, `pipx run`, `pdm run`, `hatch run`, `rye run`, `pixi run`, `conda run`, `npx`, `timeout`, and `watch` previously reached the warehouse with no approval; `dbtf build --full-refresh` was allowed outright. They now receive the same decision as the equivalent `dbt` command.
+- `dbt freshness`, dbt v2's source and model freshness check, requires approval like `dbt source freshness`, and `dbt login` asks before signing in to dbt platform.
+
 ## [1.3.0] - 2026-08-31
 
 Nothing was added to the workflow catalog. This release is entirely about the
