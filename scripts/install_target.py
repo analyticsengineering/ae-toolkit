@@ -11,8 +11,8 @@ was meant to gate. The failure is silent and it fails open, which is the worst
 combination: the user still believes the guardrail is there. Stamping absolute
 paths at install time is the only reliable fix, and it is why this script exists.
 
-The workspace is not empty. `AGENTS.md`, `.agents/hooks.json`, and the MCP config
-are shared files that a team may already use, and the toolkit's own data-safety
+The workspace is not empty. `AGENTS.md` and `.agents/hooks.json` are shared
+files that a team may already use, and the toolkit's own data-safety
 rule says creating files is free while editing existing ones needs consent. So
 shared files are merged, never clobbered, and the merge is idempotent so that
 reinstalling updates in place rather than duplicating.
@@ -128,7 +128,7 @@ def absolutize_hooks(config: dict, workspace: Path, target: Target) -> dict:
 
 def plan_copies(source_root: Path, target: Target) -> tuple[list[Path], list[Path]]:
     """Split the target's files into plain copies and files needing a merge."""
-    shared_names = {"AGENTS.md", target.hooks_config, target.mcp_config}
+    shared_names = {"AGENTS.md", target.hooks_config}
     plain: list[Path] = []
     shared: list[Path] = []
     for path in sorted(source_root.rglob("*")):

@@ -13,6 +13,7 @@ from typing import Any, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import artifact_inventory  # noqa: E402
+import dbt_capabilities  # noqa: E402
 import inspect_dbt  # noqa: E402
 import redact_secrets  # noqa: E402
 
@@ -31,10 +32,20 @@ RESULT_STATUS = {
     "fail": "failed",
     "error": "failed",
     "runtime error": "failed",
+    # dbt State: the node passed earlier against identical inputs and was not
+    # run this time.
+    "reused": "reused",
 }
 
+# dbt State also reports `success` for a model it cloned from another
+# environment or skipped as fresh enough, and has changed which status those
+# carry between releases, so the message is read as well as the status.
+NOT_EXECUTED_MESSAGE = re.compile(
+    r"cloned from (?:an)?other environment|within lag tolerance|\breused\b", re.IGNORECASE
+)
+
 # Worst-first, so one failed node decides the overall reading.
-STATUS_PRECEDENCE = ("failed", "partial", "warned", "passed", "no_op", "skipped")
+STATUS_PRECEDENCE = ("failed", "partial", "warned", "passed", "no_op", "reused", "skipped")
 
 
 def _redact(message: str) -> str:
@@ -241,14 +252,96 @@ def _evidence(
     )
 
 
+def _read_freshness_json(path_value: str | Path) -> dict[str, Any]:
+    """Recognize dbt v2's `freshness.json` without claiming to understand it.
+
+    dbt publishes no schema for this file yet, so its provenance is checked the
+    same way as any artifact's and its per-node results are counted, but no
+    pass or fail reading is derived from a structure nobody has documented.
+    """
+    path = Path(path_value).expanduser().resolve()
+    base: dict[str, Any] = {"path": str(path), "present": path.is_file(), "valid": False, "metadata": {}}
+    if not base["present"]:
+        return base
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {**base, "error": str(exc)}
+    if not isinstance(document, dict):
+        return {**base, "error": "freshness.json root is not an object"}
+    results = document.get("results")
+    return {
+        **base,
+        "valid": True,
+        "metadata": artifact_inventory.artifact_metadata(document),
+        "result_count": len(results) if isinstance(results, list) else None,
+        "note": (
+            "freshness.json is recognized as the result of `dbt freshness`, but its "
+            "contents are not interpreted. Run `dbt source freshness` for a source "
+            "reading this toolkit can explain, or read the command's own output."
+        ),
+    }
+
+
+def _not_written(
+    json_artifacts: dbt_capabilities.Capability,
+    expected_operation: str | None,
+    log_text: str | None,
+) -> dict[str, Any]:
+    """The answer when the command that ran was not writing artifacts."""
+    result: dict[str, Any] = {
+        "ok": True,
+        "status": "not_written",
+        "artifact": {"kind": None, "present": False, "valid": False},
+        "failure_count": 0,
+        "failures": [],
+        "warning_count": 0,
+        "warnings": [],
+        "json_artifacts": json_artifacts.as_dict(),
+        "artifact_verified": False,
+        "verified": False,
+        "interpretation_note": (
+            "JSON artifacts were turned off for this command "
+            f"({json_artifacts.evidence}), so no artifact in the target directory "
+            "describes it, including any left by an earlier run. Report the "
+            "command's exit status and log, or rerun it with JSON artifacts on."
+        ),
+    }
+    if expected_operation:
+        result["expected_operation"] = expected_operation
+        result["expected_artifact"] = artifact_inventory.OPERATION_ARTIFACTS.get(expected_operation)
+    if log_text:
+        redacted = _redact(log_text)
+        match = re.search(
+            r"(?im)^\s*(compilation error|database error|runtime error)\b[:\s-]*(.*)$", redacted
+        )
+        if match:
+            message = " ".join(part for part in match.groups() if part).strip()
+            result["status"] = "failed"
+            result["failures"] = [
+                {
+                    "unique_id": "log",
+                    "status": "error",
+                    "reading": "failed",
+                    "category": _category("", message),
+                    "message": message,
+                    "execution_time": None,
+                }
+            ]
+            result["failure_count"] = 1
+    return result
+
+
 def interpret_results(
     run_results: str | Path | None = None,
     *,
     log_text: str | None = None,
     sources: str | Path | None = None,
+    freshness_json: str | Path | None = None,
     expected_operation: str | None = None,
     since: str | None = None,
     invocation_id: str | None = None,
+    json_artifacts: dbt_capabilities.Capability | None = None,
 ) -> dict[str, Any]:
     artifact_present = False
     artifact_valid = False
@@ -256,7 +349,11 @@ def interpret_results(
     metadata: dict[str, Any] = {}
     node_statuses: list[str] = []
     batches: list[dict[str, Any]] = []
+    not_executed: list[dict[str, Any]] = []
     evidence: dict[str, artifact_inventory.ArtifactEvidence] = {}
+
+    if json_artifacts is not None and json_artifacts.value is False:
+        return _not_written(json_artifacts, expected_operation, log_text)
 
     if run_results is not None:
         path = Path(run_results).expanduser().resolve()
@@ -282,12 +379,24 @@ def interpret_results(
                             continue
                         raw_status = str(result.get("status") or "unknown")
                         reading = RESULT_STATUS.get(raw_status.lower(), "failed")
+                        raw_message = str(result.get("message") or "")
+                        if reading == "passed" and NOT_EXECUTED_MESSAGE.search(raw_message):
+                            reading = "reused"
                         node_statuses.append(reading)
                         batch = _batch_summary(result)
                         if batch:
                             batches.append(
                                 {"unique_id": str(result.get("unique_id") or ""), **batch}
                             )
+                        if reading == "reused":
+                            not_executed.append(
+                                {
+                                    "unique_id": str(result.get("unique_id") or "unknown"),
+                                    "status": raw_status,
+                                    "message": _redact(raw_message) or None,
+                                }
+                            )
+                            continue
                         if reading in {"passed", "skipped", "no_op"}:
                             continue
                         unique_id = str(result.get("unique_id") or "unknown")
@@ -338,6 +447,16 @@ def interpret_results(
         )
         freshness["provenance"] = evidence["sources"].as_dict()
 
+    model_freshness = _read_freshness_json(freshness_json) if freshness_json is not None else None
+    if model_freshness is not None and model_freshness["valid"]:
+        evidence["freshness"] = _evidence(
+            "freshness",
+            model_freshness["path"],
+            dict(model_freshness["metadata"]),
+            since=since,
+            invocation_id=invocation_id,
+        )
+
     status = _overall_status(node_statuses, artifact_valid)
     mismatch = _provenance_mismatch(run_results, sources, metadata)
     if freshness is not None and not mismatch:
@@ -349,7 +468,16 @@ def interpret_results(
     warnings = [item for item in findings if item["reading"] == "warned"]
     partial = [item for item in findings if item["reading"] == "partial"]
 
-    if run_results is None and freshness is not None:
+    if run_results is None and sources is None and model_freshness is not None:
+        artifact_block = {
+            "kind": "freshness",
+            "present": model_freshness["present"],
+            "valid": model_freshness["valid"],
+            **model_freshness["metadata"],
+        }
+        if status == "unknown" and model_freshness["valid"]:
+            status = "uninterpreted"
+    elif run_results is None and freshness is not None:
         artifact_block = {
             "kind": "sources",
             "present": bool(freshness.get("present")),
@@ -376,13 +504,28 @@ def interpret_results(
     }
     if partial:
         result["partial"] = partial
+    if not_executed:
+        # Reused and cloned nodes are not failures, and they are not evidence
+        # either: the code they would have tested is not the code that ran.
+        result["not_executed_count"] = len(not_executed)
+        result["not_executed"] = not_executed[:50]
+        result["not_executed_note"] = (
+            "dbt State reused or cloned these nodes instead of running them, so their "
+            "status describes an earlier run, not this change."
+        )
+    if model_freshness is not None:
+        result["freshness"] = {
+            key: value for key, value in model_freshness.items() if key != "metadata"
+        }
     if expected_operation:
         expected_kind = artifact_inventory.OPERATION_ARTIFACTS.get(expected_operation)
         result["expected_operation"] = expected_operation
         result["expected_artifact"] = expected_kind
     else:
         expected_kind = "run_results" if run_results is not None else (
-            "sources" if sources is not None else None
+            "sources" if sources is not None else (
+                "freshness" if freshness_json is not None else None
+            )
         )
     proof = evidence.get(expected_kind) if expected_kind else None
     if evidence:
@@ -452,6 +595,14 @@ def _parser() -> argparse.ArgumentParser:
     parser = inspect_dbt.JsonArgumentParser(description=__doc__)
     parser.add_argument("--run-results", help="Path to run_results.json")
     parser.add_argument("--sources", help="Path to sources.json from dbt source freshness")
+    parser.add_argument("--freshness", help="Path to freshness.json from dbt v2 `dbt freshness`")
+    parser.add_argument(
+        "--command",
+        help=(
+            "The exact dbt command that ran; with `--no-write-json` no artifact can "
+            "describe it, and the reader says so instead of reading an older one"
+        ),
+    )
     parser.add_argument(
         "--project-dir",
         help="dbt project directory; artifacts are read from its configured target path",
@@ -488,7 +639,8 @@ def _parser() -> argparse.ArgumentParser:
 def _artifacts_from_project(
     project_dir: str,
     expected_operation: str | None,
-) -> tuple[str | None, str | None]:
+    command: str | None = None,
+) -> tuple[dict[str, str | None], dbt_capabilities.Capability]:
     """Resolve artifact paths through the project's configured `target-path`.
 
     Reading every artifact in the directory is how a failed build from an hour
@@ -504,10 +656,8 @@ def _artifacts_from_project(
         )
     inventory = artifact_inventory.inventory_artifacts(context)
     resolved = inventory.resolve_operation_paths(expected_operation)
-    return (
-        str(resolved["run_results"]) if resolved["run_results"] else None,
-        str(resolved["sources"]) if resolved["sources"] else None,
-    )
+    paths = {kind: str(path) if path else None for kind, path in resolved.items()}
+    return paths, dbt_capabilities.json_artifacts_written(context, command=command)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -529,11 +679,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         invocation_id = invocation_id_from_log(args.invocation_log)
         log_invocation_missing = invocation_id is None
 
-    run_results, sources = args.run_results, args.sources
+    run_results, sources, freshness = args.run_results, args.sources, args.freshness
+    json_artifacts = (
+        dbt_capabilities.json_artifacts_written(None, command=args.command)
+        if args.command
+        else None
+    )
     if args.project_dir:
         try:
-            discovered_results, discovered_sources = _artifacts_from_project(
-                args.project_dir, args.expect_operation
+            discovered, json_artifacts = _artifacts_from_project(
+                args.project_dir, args.expect_operation, args.command
             )
         except (inspect_dbt.DbtInspectionError, OSError, ValueError) as exc:
             print(
@@ -541,16 +696,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        run_results = run_results or discovered_results
-        sources = sources or discovered_sources
+        run_results = run_results or discovered["run_results"]
+        sources = sources or discovered["sources"]
+        freshness = freshness or discovered["freshness"]
 
     result = interpret_results(
         run_results,
         log_text=log_text,
         sources=sources,
+        freshness_json=freshness,
         expected_operation=args.expect_operation,
         since=args.since,
         invocation_id=invocation_id,
+        json_artifacts=json_artifacts,
     )
     if log_invocation_missing:
         result["invocation_log_note"] = (

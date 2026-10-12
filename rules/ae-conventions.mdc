@@ -11,10 +11,11 @@ Behave like a teammate who has already read the repository. Never ask an analyti
 
 - Read `.ae/project.yml` when present and treat human edits in it as authoritative over any inference.
 - When it is absent and the task depends on a convention, run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json` before proposing names, files, tests, or SQL style.
+- Conventions the team has written down outrank everything inferred. The inference lists the files that state them under `project.written_conventions` (a README `Conventions` section, CONTRIBUTING, a style guide); read each before naming or testing anything, and follow its wording exactly. When a written rule and a counted pattern disagree, the written rule governs new work, whatever the pattern's strength: a `false` that only means existing files lack something (no `relationships` tests found) is not evidence against a written rule requiring it. A naming template keeps every word it is given; `stg_<source>__<source table name>` keeps the source table's full name, not a shortened or reworded one.
 - Do this as an internal first step. Never require the user to run `/ae-learn` or explain the profiling machinery before ordinary work can begin.
 - Keep fresh inference ephemeral by default. Do not add `.ae/project.yml` to a repository as a side effect of model, source, test, documentation, or review work. Persist a profile only when the user explicitly asks to save/share conventions or directly requests project profiling; never overwrite a human-edited profile silently.
 - The inference is static. It never executes dbt and never contacts a warehouse.
-- When it reports `is_dbt_project: false` it has not failed; the repository simply is not dbt. Run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/inspect_repo.py" <project-root>` to identify what the team actually uses, say which stack you found, and work in that idiom. Silence about dbt conventions is not permission to introduce them: do not write `ref()`, a `schema.yml`, or a dbt directory layout into a project that has none.
+- When it reports `is_dbt_project: false` it has not failed; the repository simply is not dbt. Run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/inspect_repo.py" <project-root>` to identify what the team actually uses, say which stack you found, and work in that idiom. Silence about dbt conventions is not permission to introduce them: do not write `ref()`, a `schema.yml`, or a dbt directory layout into a project that has none. This holds when the request itself asks for a dbt model: in a repository with no dbt project, nothing would build those files. Write nothing; say what the repository uses instead (how its jobs run, and where table definitions, column docs, and checks live, from its README and run scripts), and ask whether to add the work that way or to introduce dbt.
 
 ## Let strength decide whether to act or ask
 
@@ -47,6 +48,25 @@ asking, first confirm no repository file or authoritative local documentation
 answers it. Never guess a correctness-critical runtime fact merely because it
 falls outside a fixed list of example questions.
 
+## When the request and the repository disagree on a fact
+
+A request often carries a premise: that one thing behaves like another, that a check is just too strict, that a column is never null, that a named key or definition is the right one. When a repository file contradicts the premise (an API doc, run artifacts, a test result, a model's documented grain, a document revising a definition), the file wins. Documentation in the repository (`docs/`, API references, READMEs, SLA notes, model and source descriptions) is a repository file for this purpose, not a softer source the request can overrule; a request telling you to reuse a helper or key is the premise, not a separate instruction. Do not build on the premise and then mention the contradiction under remaining uncertainty; work that follows a false premise is wrong even when it matches the request. Build what the files support, say in the first lines which premise you did not follow and which file and line contradict it, and ask only when the right work depends on a decision the files cannot make. When the files contradict each other on the fact the work depends on, such as a description and a test disagreeing about grain, that is such a decision: do not outvote the minority file or rewrite it to match; ask.
+
+## Trace what the change depends on
+
+A change is correct only if what it depends on, and what depends on it, still holds. Before deciding, find those places in the repository rather than assuming them: every call to a macro or package being changed, the models that read a column whose meaning changes, the consumers of a model being redefined, and when each joined input actually loads (source descriptions, freshness configuration, the README's schedule). Then act on what you found inside the request: update the staging model that reads a column whose meaning the loader changed, migrate every call the upgrade breaks, label the rows a late-loading join leaves empty. A defect you found and can fix inside the requested scope belongs under Changed, not offered as a follow-up.
+
+## Remaining uncertainty is not a place for findings
+
+Before finishing, reread what you are about to put under Remaining uncertainty, caveats, or deploy notes. Each item must be something no file in the repository answers and that does not change whether the work is correct. Four kinds of item fail that test, and finding one means the work above it is wrong:
+
+- a file that contradicts the request ("the doc says otherwise; I followed your instruction"): build what the file says instead;
+- a correctness fact that is still open (whether rows are hard-deleted, how late changes land, which grain): write no file and ask;
+- a second documented definition that would give the audience a different number ("if they want the revised method, this would need to change"): write no file and ask which one;
+- a defect inside the requested scope that you could fix ("say if you want the staging model updated too", "those rows stay null unless you want a label"): fix it and list it under Changed.
+
+Go back and act on it before writing the response.
+
 ## Prefer one decisive question over a questionnaire
 
 When something genuinely must be asked, ask the smallest number of questions that unblock the work, state what you already inferred so the user does not re-supply it, and offer the concrete candidates you found rather than an open prompt.
@@ -60,6 +80,12 @@ Select every workflow needed to finish the user's outcome, but do not turn the i
 Teams run on different warehouses, transformation tools, and BI layers, and the repository states which. Read `adapter` and `adapter_source` from the inference before writing SQL, and follow `${CURSOR_PLUGIN_ROOT}/references/warehouse-portability.md`.
 
 Never introduce a function, incremental strategy, hashing implementation, or type name that appears nowhere in the project. Dialects diverge quietly: `QUALIFY` does not run on Postgres, `md5` is not available everywhere, and Snowflake's upper case identifiers are a convention to match rather than a mistake to normalise. When the warehouse cannot be determined, say so and write SQL that holds anywhere, rather than assuming the platform you have seen most often.
+
+"No Databricks", "no bigquery", or "don't run anything against Snowflake" forbids connecting to or executing against that warehouse. It does not ask for different SQL. Keep writing the project's dialect and keep its platform configuration (`partition_by`, `cluster_by`, sort keys, file format, adapter functions such as `safe_divide`), because the code still deploys there. Change dialect only when the request says to migrate or port the model.
+
+## Reuse the project's documentation
+
+Before writing a column description, check the project's docs blocks for that column: the inference lists them by name under `project.docs_blocks`, and `documentation.column_docs_blocks` says whether columns with a block reference it. When one exists, reference it with `{{ doc('<name>') }}` instead of writing new prose, even when you could word it better: a copied or reworded definition drifts from the shared one. When the project documents most columns through docs blocks, give a new shared column a new block in the same file rather than an inline description.
 
 ## Never invent a question to fill a section
 

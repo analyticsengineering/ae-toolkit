@@ -456,6 +456,48 @@ class ConventionInferenceTests(unittest.TestCase):
             "listed YAML columns do not establish coverage of model output columns",
         )
 
+    def test_docs_blocks_are_named_and_their_reuse_is_a_convention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            shutil.copytree(self.fixture("clean_project"), project)
+            (project / "models" / "docs.md").write_text(
+                "{% docs order_id %}\nThe order.\n{% enddocs %}\n\n{%- docs ordered_at -%}\nWhen.\n{%- enddocs -%}\n",
+                encoding="utf-8",
+            )
+            (project / "models" / "_docs_reuse.yml").write_text(
+                "version: 2\n\nmodels:\n"
+                + "".join(
+                    f"  - name: reuse_{index}\n    columns:\n"
+                    "      - name: order_id\n        description: '{{ doc(\"order_id\") }}'\n"
+                    "      - name: status\n        description: Inline prose for a column with no block.\n"
+                    for index in range(5)
+                ),
+                encoding="utf-8",
+            )
+            report = infer_conventions.infer_conventions(project)
+
+        blocks = report["project"]["docs_blocks"]
+        self.assertEqual(blocks["count"], 2)
+        self.assertEqual(blocks["names"], {"order_id": "models/docs.md", "ordered_at": "models/docs.md"})
+        evidence = report["evidence"]["documentation.column_docs_blocks"]
+        self.assertEqual(evidence["candidates"].get("true"), 5)
+        self.assertTrue(report["conventions"]["documentation"]["column_docs_blocks"])
+
+    def test_written_conventions_are_listed_and_said_to_outrank_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            shutil.copytree(self.fixture("clean_project"), project)
+            (project / "README.md").write_text(
+                "# shop\n\n## Conventions\n\n- Staging models are `stg_<source>__<table>`.\n", encoding="utf-8"
+            )
+            (project / "docs").mkdir(exist_ok=True)
+            (project / "docs" / "onboarding.md").write_text("# Onboarding\n\nAsk in the channel.\n", encoding="utf-8")
+            report = infer_conventions.infer_conventions(project)
+
+        self.assertEqual(report["project"]["written_conventions"], [{"path": "README.md", "headings": ["Conventions"]}])
+        self.assertIn("README.md", report["inference_note"])
+        self.assertIn("outranks", report["inference_note"])
+
     def test_unprefixed_root_marts_are_positive_naming_evidence(self) -> None:
         report = self.infer("legacy_unprefixed_finals")
 

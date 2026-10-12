@@ -1,0 +1,62 @@
+name: Installation or host problem
+description: The toolkit does not load, a skill or command is missing, or a gate does not run in your editor.
+labels: [install]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the doctor; it diagnoses most install problems on its own. See docs/INSTALL.md for troubleshooting.
+
+        If a gate let a destructive command through, report it privately through SECURITY.md instead.
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install
+      options:
+        - Cursor plugin
+        - VS Code target
+        - Antigravity target
+        - Skills only (npx skills add)
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Editor or agent, and its version
+      description: As shown in the editor's About dialog or `--version` output.
+      placeholder: "e.g. Cursor x.y.z"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows (not yet supported)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Run `python3 scripts/doctor.py --workspace <repo>` from your install and paste the result. It prints no secrets.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How you installed it
+      description: The exact commands, and whether the install is a copy or a symlink.
+    validations:
+      required: true
+  - type: textarea
+    id: symptom
+    attributes:
+      label: What happens
+      description: What is missing or failing. For Cursor, include any line from the Output panel's Cursor Plugins channel that mentions the toolkit.
+    validations:
+      required: true

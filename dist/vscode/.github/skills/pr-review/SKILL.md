@@ -21,7 +21,7 @@ Obtain:
 - Changed files plus relevant surrounding definitions, tests, lineage, and deployment context.
 - Critical models/metrics, warehouse/dialect, and known rollout constraints.
 
-Default silently to Work mode and deliver merge-focused findings. In Learn mode, explain why each issue matters and how to review it. In Assessment mode, evaluate only the learner's submitted review without revealing missed-answer details that server policy withholds.
+Default silently to Work mode and deliver merge-focused findings. In Learn mode, explain why each issue matters and how to review it. In Assessment mode, evaluate only the learner's submitted review without revealing missed-answer details that the exercise withholds.
 
 ## Inspection procedure
 

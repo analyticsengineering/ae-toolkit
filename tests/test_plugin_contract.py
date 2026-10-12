@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import ast
 import json
-import socket
 import unittest
 from pathlib import Path
-from unittest import mock
-from urllib.parse import urlparse
 
 from test_support import PLUGIN_ROOT, parse_frontmatter, read_json, load_module
 
@@ -18,6 +15,7 @@ EXPECTED_COMMANDS = {
     "ae-dbt-health",
     "ae-debug",
     "ae-diagnostic",
+    "ae-doctor",
     "ae-explain",
     "ae-grade",
     "ae-hint",
@@ -41,6 +39,7 @@ FREE_COMMANDS = {
     "ae-build-model",
     "ae-trace",
     "ae-validate",
+    "ae-doctor",
 }
 EXPECTED_SKILLS = {
     "analytics-requirements",
@@ -84,21 +83,21 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(
             {
                 key: manifest[key]
-                for key in ("rules", "skills", "agents", "commands", "hooks", "mcpServers")
+                for key in ("rules", "skills", "agents", "commands", "hooks")
             },
             {
                 "rules": "rules/",
-                "skills": "skills/",
+                "skills": "src/skills/",
                 "agents": "agents/",
                 "commands": "commands/",
                 "hooks": "hooks/hooks.json",
-                "mcpServers": "mcp.json",
             },
         )
         for key in ("rules", "skills", "agents", "commands"):
             self.assertTrue((PLUGIN_ROOT / manifest[key]).is_dir(), key)
-        for key in ("hooks", "mcpServers"):
-            self.assertTrue((PLUGIN_ROOT / manifest[key]).is_file(), key)
+        self.assertTrue((PLUGIN_ROOT / manifest["hooks"]).is_file())
+        self.assertNotIn("mcpServers", manifest, "the toolkit ships no MCP server")
+        self.assertFalse((PLUGIN_ROOT / "mcp.json").exists())
         self.assertTrue((PLUGIN_ROOT / manifest["logo"]).is_file())
 
     def test_single_plugin_does_not_ship_marketplace_manifest(self) -> None:
@@ -113,7 +112,7 @@ class PluginManifestTests(unittest.TestCase):
         commands = {path.stem for path in (PLUGIN_ROOT / "commands").glob("*.md")}
         skills = {
             path.parent.name
-            for path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md")
+            for path in (PLUGIN_ROOT / "src" / "skills").glob("*/SKILL.md")
         }
         agents = {path.stem for path in (PLUGIN_ROOT / "agents").glob("*.md")}
         self.assertEqual(commands, EXPECTED_COMMANDS)
@@ -121,7 +120,7 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(agents, EXPECTED_AGENTS)
 
     def test_free_commands_are_explicitly_local_only(self) -> None:
-        self.assertEqual(len(FREE_COMMANDS), 10)
+        self.assertEqual(len(FREE_COMMANDS), 11)
         for command in FREE_COMMANDS:
             text = (PLUGIN_ROOT / "commands" / f"{command}.md").read_text(
                 encoding="utf-8"
@@ -129,6 +128,17 @@ class PluginManifestTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn("Never require or call MCP", text)
                 self.assertNotIn("Connected Advanced", text)
+
+    def test_course_commands_work_without_a_course_service(self) -> None:
+        """There is no course server, so a command that waits for one does nothing."""
+        for command in ("ae-hint", "ae-grade", "ae-diagnostic", "ae-capstone-check"):
+            text = (PLUGIN_ROOT / "commands" / f"{command}.md").read_text(encoding="utf-8")
+            with self.subTest(command=command):
+                for phrase in ("Connected Advanced", "uthenticate", "server policy", "server-authoritative"):
+                    self.assertNotIn(phrase, text)
+        coach = (PLUGIN_ROOT / "agents" / "learning-coach.md").read_text(encoding="utf-8")
+        self.assertNotIn("uthenticate", coach)
+        self.assertIn("not an official grade", (PLUGIN_ROOT / "commands" / "ae-grade.md").read_text(encoding="utf-8"))
 
     def test_skills_are_naturally_discoverable_and_default_to_work(self) -> None:
         trigger_terms = {
@@ -146,7 +156,7 @@ class PluginManifestTests(unittest.TestCase):
             "yaml-maintenance": "yaml",
             "validate-dbt": "validate",
         }
-        for path in sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md")):
+        for path in sorted((PLUGIN_ROOT / "src" / "skills").glob("*/SKILL.md")):
             with self.subTest(skill=path.parent.name):
                 frontmatter = parse_frontmatter(path)
                 description = frontmatter["description"].lower()
@@ -164,7 +174,7 @@ class PluginManifestTests(unittest.TestCase):
     def test_all_component_frontmatter_is_complete_and_consistent(self) -> None:
         component_paths = [
             *((PLUGIN_ROOT / "commands").glob("*.md")),
-            *((PLUGIN_ROOT / "skills").glob("*/SKILL.md")),
+            *((PLUGIN_ROOT / "src" / "skills").glob("*/SKILL.md")),
             *((PLUGIN_ROOT / "agents").glob("*.md")),
         ]
         self.assertEqual(
@@ -191,9 +201,9 @@ class PluginManifestTests(unittest.TestCase):
             self.assertTrue(frontmatter.get("description"))
             self.assertEqual(frontmatter.get("alwaysApply"), "true")
 
-        sql_skill = PLUGIN_ROOT / "skills" / "sql-review" / "SKILL.md"
+        sql_skill = PLUGIN_ROOT / "src" / "skills" / "sql-review" / "SKILL.md"
         report_reference = (
-            PLUGIN_ROOT / "skills" / "sql-review" / "references" / "report-format.md"
+            PLUGIN_ROOT / "src" / "skills" / "sql-review" / "references" / "report-format.md"
         )
         self.assertTrue(report_reference.is_file())
         self.assertIn(
@@ -220,7 +230,7 @@ class SqlFixtureContractTests(unittest.TestCase):
             PLUGIN_ROOT / "tests" / "fixtures" / "sql" / "one_to_many_fanout.sql"
         ).read_text(encoding="utf-8").lower()
         skill = (
-            PLUGIN_ROOT / "skills" / "sql-review" / "SKILL.md"
+            PLUGIN_ROOT / "src" / "skills" / "sql-review" / "SKILL.md"
         ).read_text(encoding="utf-8").lower()
 
         self.assertIn("one-to-many", fixture)
@@ -252,33 +262,19 @@ class SqlFixtureContractTests(unittest.TestCase):
 
 
 class RuntimeConfigurationTests(unittest.TestCase):
-    def test_disconnected_mcp_configuration_is_structurally_valid(self) -> None:
-        with mock.patch.object(
-            socket, "create_connection", side_effect=AssertionError("network forbidden")
-        ):
-            config = read_json(PLUGIN_ROOT / "mcp.json")
-
-        self.assertEqual(set(config), {"mcpServers"})
-        self.assertEqual(set(config["mcpServers"]), {"analytics-engineering"})
-        server = config["mcpServers"]["analytics-engineering"]
-        self.assertEqual(set(server), {"url"})
-        parsed = urlparse(server["url"])
-        self.assertEqual(parsed.scheme, "https")
-        self.assertEqual(parsed.hostname, "mcp.analyticsengineering.com")
-        self.assertEqual(parsed.path, "/mcp")
-
     def test_python_hook_requirement_is_explicit_and_fail_closed(self) -> None:
         hooks = read_json(PLUGIN_ROOT / "hooks" / "hooks.json")
         configured = [
-            hook
-            for hook_group in hooks["hooks"].values()
+            (event, hook)
+            for event, hook_group in hooks["hooks"].items()
             for hook in hook_group
         ]
-        self.assertEqual(len(configured), 2)
-        for hook in configured:
+        self.assertEqual(len(configured), 4)
+        for event, hook in configured:
             self.assertTrue(hook["command"].startswith("python3 "))
             self.assertIn("${CURSOR_PLUGIN_ROOT}", hook["command"])
-            self.assertTrue(hook["failClosed"])
+            # A message hook that failed closed would stop the person from sending anything.
+            self.assertEqual(bool(hook.get("failClosed")), event != "beforeSubmitPrompt")
             self.assertGreater(hook["timeout"], 0)
             self.assertNotIn("fallback", hook["command"].lower())
 
@@ -363,12 +359,12 @@ class RuntimeConfigurationTests(unittest.TestCase):
         because a reader can verify it from the source. That makes it a property
         of the code rather than of anyone's intent, so it needs to survive a
         contributor who never opened PRIVACY.md. The single outbound path this
-        product is allowed is the optional MCP endpoint, which the host dials on
-        the plugin's behalf; nothing here opens a connection itself.
+        product ships no MCP server either; any server a team adds is dialled by
+        the host, and nothing here opens a connection itself.
 
         Imports are read with the AST rather than matched with a regex, because
         the distinction that matters is a fine one. `urllib.parse` is string
-        handling and the cloud gate legitimately needs it to check an MCP host;
+        handling and the MCP gate legitimately needs it to recognise a dbt host;
         `urllib.request` is a transport and must never appear. Only a parser
         separates them reliably, and a regex would either miss the second or ban
         the first.

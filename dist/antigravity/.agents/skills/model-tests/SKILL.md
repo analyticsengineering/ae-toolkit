@@ -25,13 +25,22 @@ Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, a
 
 Read `.ae/project.yml` first and treat human edits as authoritative. If absent, run `python3 ".agents/ae-toolkit/scripts/infer_conventions.py" <project-root> --json` and inspect neighboring model YAML, singular tests, unit tests, packages, and macros. Infer test syntax, placement, arguments, severity, naming, and key defaults from repository evidence. Apply strong conventions silently, state weak assumptions, ask about genuine splits, and label defaults when evidence is absent.
 
+## Fixing a failing test
+
+Before editing a failing test, classify the failing rows from the documentation.
+
+- **Exempt:** the documentation says the value never applies to those rows. Scoping the test to the rows it applies to is ordinary work.
+- **Late:** the value applies but has not arrived. Wording such as "until", "pending", "not yet", "once X ships", a ticket number, or a named owner of the gap means late, not exempt, and so does a column described as required for a downstream use. A known upstream gap is a defect with an owner, not a documented exception.
+
+For late rows the test is right. A `where` filter, `severity: warn`, a placeholder coalesced into the column, or a description rewritten around the gap all hide rows the consumer needs. Change nothing; name the rows, the gap's owner, and who is hurt, and ask how to proceed. That is the complete answer, even when the request says to make the build green or to fix it the same way as another test.
+
 ## Procedure
 
 1. State the model grain, candidate key, joins, filters, transformations, and documented contract from local artifacts.
 2. Inventory existing tests and distinguish what each actually proves from what its name suggests.
 3. Rank concrete failure risks by impact and likelihood. Add a test only when its failing rows and protected behavior can be stated.
 4. Use the least complex demonstrated test form: built-in generic, installed package or project macro, singular SQL, then unit test when fixture-level transformation behavior is the subject.
-5. Attach key tests only to a key the model logic can support. For composite grain, follow the repository's established combination test or singular-test pattern.
+5. Attach key tests only to a key the model logic can support, and always test the grain the model states. This holds when the request names other tests: "not_null on every column" or "add docs and tests" adds to the grain test rather than replacing it, so add the grain test alongside and list it. For composite grain, follow the repository's established combination test or singular-test pattern; when there is none, use `dbt_utils.unique_combination_of_columns` if dbt_utils is installed, otherwise a singular test returning grain combinations that occur more than once. A `unique` test on a row identifier does not prove a composite grain.
 6. Add relationship tests only when the intended referential rule and null policy are known. Do not turn optional relationships into false failures.
 7. Keep tests at the model whose contract they protect; do not duplicate upstream checks unless this model can reintroduce the defect.
 8. Confirm macros, packages, fixtures, refs, sources, and columns referenced by each proposed test exist locally.
@@ -47,6 +56,7 @@ For every proposed test, cite the SQL, contract, requirement, incident, or downs
 - Adding `unique` because a column looks like an ID without establishing model grain.
 - Treating `not_null` plus `unique` as proof of business correctness.
 - Testing optional relationships as mandatory or ignoring accepted null semantics.
+- Calling values that are late or missing "legitimately null" so a failing test can be scoped green.
 - Duplicating upstream tests that cannot fail because of this model's logic.
 - Introducing a package macro or test syntax absent from project dependencies.
 - Writing a singular test whose passing condition is reversed or whose scope is unbounded.

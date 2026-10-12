@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue or gate bypass
+    url: https://github.com/analyticsengineering/ae-toolkit/blob/main/SECURITY.md
+    about: Report privately; do not open a public issue.

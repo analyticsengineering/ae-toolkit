@@ -1,7 +1,0 @@
-{
-  "servers": {
-    "analytics-engineering": {
-      "url": "https://mcp.analyticsengineering.com/mcp"
-    }
-  }
-}

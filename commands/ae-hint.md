@@ -1,23 +1,21 @@
 ---
 name: ae-hint
-description: Request a progressive, non-solution hint for the active analytics-engineering exercise through the approved learning workflow.
+description: Give the next progressive, non-solution hint for the active analytics-engineering exercise, using only local exercise files.
 ---
 
-# Request an Exercise Hint
+# Give an Exercise Hint
 
-Apply the `learning-coach` agent and its progressive hint ladder. This is an explicitly triggered connected learning command.
-
-## Execution boundary
-
-- **Local Basic:** Read `.ae/exercise.json` and the learner-selected local artifact only to identify mode and prepare a minimal, redacted content preview. Do not call MCP or produce the hint in this stage.
-- **Connected Advanced:** Required for hint delivery. Authenticate with the configured learning provider, show the provider and exact redacted content preview, and obtain explicit approval before transmitting anything. If authentication or approval is absent, stop without a hint.
+Apply the `learning-coach` agent and its progressive hint ladder. This runs locally: it reads the exercise and the learner's work in the repository and sends nothing anywhere.
 
 ## Workflow
 
-1. Verify `.ae/exercise.json` exists and parse exercise identity, Learn or Assessment mode, constraints, allowed context, hint state, and expected artifact. If missing or invalid, stop and explain.
-2. Ask the learner to select the relevant artifact and summarize what they tried and where they are stuck.
-3. Minimize and redact the payload: remove secrets, credentials, connection strings, PII, unrelated code, raw data, and hidden answer or rubric content.
-4. Authenticate, then display the destination, payload preview, and privacy risk. Ask for explicit approval; command invocation alone is not approval.
-5. After approval, request exactly one next-level hint: Hint 1 gives conceptual direction; Hint 2 is more specific; Hint 3 points to the relevant construct or pattern.
-6. A solution is allowed only when server policy permits it, the user explicitly requests it after attempts, and the exercise is not in Assessment mode. Never reveal hidden tests or answer keys.
-7. Record or report the hint level only if permitted; verify the learner can state their next step.
+1. Read `.ae/exercise.json` and parse exercise identity, Learn or Assessment mode, constraints, allowed assistance, hint state, and expected artifact. If it is missing or invalid, say so and offer general coaching on the concept the learner names instead.
+2. In Assessment mode, give a hint only when the exercise's allowed assistance permits hints. Otherwise say hints are off for this attempt and stop.
+3. Ask the learner to point at the relevant artifact and say what they tried and where they are stuck, unless they already have.
+4. Work out the next level. Start from `hints_used` in `.ae/exercise.json` when present, then count hints already given in this conversation. Do not edit `.ae/exercise.json` to record it.
+5. Give exactly one hint at that level:
+   - Hint 1: a conceptual question or direction;
+   - Hint 2: a targeted observation about their artifact;
+   - Hint 3: the relevant construct or pattern, without writing it for them.
+6. Never write the solution, replacement SQL or model, or the content of hidden tests, answer files, or rubric internals the exercise marks as hidden. A full solution is allowed only in Learn mode, after three hints, when the learner explicitly asks for it and the exercise does not forbid it.
+7. End with the hint level given and one self-check the learner can run to know whether the hint landed.

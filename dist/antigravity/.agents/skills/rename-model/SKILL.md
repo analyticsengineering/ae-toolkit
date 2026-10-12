@@ -7,6 +7,10 @@ description: Coordinates name-only renames of analytical models, columns, relati
 
 Change a model's identity without silently changing the data it publishes or leaving consumers behind.
 
+## First decision: has this rename been approved?
+
+An existing file changes only after the requester has seen the plan and approved it in this conversation. Until then the response is `# Rename Plan` and no file is edited, renamed, or deleted, however the request was phrased. `# Rename Result` belongs to the turn after that approval. A compatibility strategy, such as keeping the old name as an alias, is one of the options the plan presents for approval, not a way to make editing safe without it.
+
 ## When to use
 
 - Rename a model, column, source, relation, metric, semantic object, or model file.
@@ -61,7 +65,7 @@ Every actionable finding includes severity and confidence plus **Evidence**, **R
 
 ## Output contract
 
-Before approval, return `# Rename Plan` with: Old and new identities; Contract-preservation check; Convention evidence; Reference inventory; External unknowns; Compatibility strategy; Ordered path and reference diff; Blast radius; Verification plan; Approval needed.
+Until approval has been given in this conversation, return `# Rename Plan` with: Old and new identities; Contract-preservation check; Convention evidence; Reference inventory; External unknowns; Compatibility strategy; Ordered path and reference diff; Blast radius; Verification plan; Approval needed.
 
 After an approved rename, return `# Rename Result` with: Paths created, changed, renamed, and removed; References updated; Compatibility retained; Static verification; Unresolved external consumers; Follow-up commands not run.
 

@@ -421,6 +421,10 @@ OBSERVATION_META: dict[str, dict[str, Any]] = {
         "resource_pattern": True,
         "decode": _as_bool,
     },
+    "documentation.column_docs_blocks": {
+        "question": "Should a column that has a docs block of its name reference it?",
+        "decode": _as_bool,
+    },
 }
 
 
@@ -669,11 +673,58 @@ def _relationship_candidates(
     return candidates
 
 
+DOC_CALL = re.compile(r"\bdoc\(\s*['\"]")
+DOCS_BLOCK = re.compile(r"{%-?\s*docs\s+([A-Za-z0-9_]+)\s*-?%}")
+MAX_DOCS_BLOCK_NAMES = 300
+
+
+def _docs_blocks(root: Path, is_own_code: Callable[[str], bool]) -> dict[str, Any]:
+    """Name the shared docs blocks, so new columns reuse them instead of new prose."""
+    names: dict[str, str] = {}
+    for path in sorted(root.rglob("*.md")):
+        relative = path.relative_to(root).as_posix()
+        if not is_own_code(relative) or set(Path(relative).parts) & {"target", "dbt_packages", "logs", ".git"}:
+            continue
+        for name in DOCS_BLOCK.findall(inspect_dbt._read_text(path)):
+            names.setdefault(name, relative)
+    listed = sorted(names)[:MAX_DOCS_BLOCK_NAMES]
+    return {
+        "count": len(names),
+        "files": sorted(set(names.values())),
+        "names": {name: names[name] for name in listed},
+        "truncated": len(names) > MAX_DOCS_BLOCK_NAMES,
+    }
+
+
+CONVENTION_HEADING = re.compile(
+    r"(?im)^\s{0,3}#{1,4}\s+([^\n]*\b(?:conventions?|style(?:\s+guide)?|standards|naming|guidelines|how\s+we\s+(?:model|build|write))\b[^\n]*)$"
+)
+CONVENTION_FILE = re.compile(r"(?i)(?:^|/)(?:readme|contributing|style|styleguide|conventions|standards)[^/]*\.md$")
+MAX_WRITTEN_CONVENTION_FILES = 20
+
+
+def _written_conventions(root: Path, is_own_code: Callable[[str], bool]) -> list[dict[str, Any]]:
+    """Files where the team writes its conventions down, which outrank anything inferred."""
+    found: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*.md")):
+        relative = path.relative_to(root).as_posix()
+        parts = Path(relative).parts
+        if len(parts) > 3 or not is_own_code(relative) or set(parts) & {"target", "dbt_packages", "logs", ".git", "node_modules"}:
+            continue
+        headings = [heading.strip() for heading in CONVENTION_HEADING.findall(inspect_dbt._read_text(path))]
+        if headings or (CONVENTION_FILE.search(relative) and len(parts) == 1 and not relative.lower().startswith("readme")):
+            found.append({"path": relative, "headings": headings[:10]})
+        if len(found) >= MAX_WRITTEN_CONVENTION_FILES:
+            break
+    return found
+
+
 def _observe_yaml(
     root: Path,
     yaml_paths: list[str],
     model_paths: list[str],
     tallies: dict[str, Tally],
+    docs_block_names: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     yaml_model_entries = 0
     declared_columns = 0
@@ -710,6 +761,12 @@ def _observe_yaml(
                 column_description = column.get("description")
                 if isinstance(column_description, str) and column_description.strip():
                     described_columns += 1
+                if column_name in docs_block_names:
+                    tallies["documentation.column_docs_blocks"].add(
+                        "true" if isinstance(column_description, str) and DOC_CALL.search(column_description)
+                        else "false",
+                        relative,
+                    )
                 tallies["documentation.column_descriptions_required"].add(
                     "true" if isinstance(column_description, str) and column_description.strip() else "false",
                     relative,
@@ -1079,7 +1136,13 @@ def _project_facts(
     ]
     import project_context as _context
 
-    engine, engine_evidence = _context.infer_engine(root, _context.git_root_for(root))
+    layout = _context.DbtProjectLayout(root, project)
+    engine, engine_evidence = _context.infer_engine(
+        root,
+        _context.git_root_for(root),
+        require_dbt_version=layout.require_dbt_version,
+        target_dir=root / layout.target_path,
+    )
     facts = {
         "name": project.get("name"),
         "transformation": "dbt",
@@ -1129,7 +1192,8 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
 
     tallies = _tallies()
     _observe_models(root, model_paths, tallies)
-    documentation = _observe_yaml(root, yaml_paths, model_paths, tallies)
+    docs_blocks = _docs_blocks(root, own)
+    documentation = _observe_yaml(root, yaml_paths, model_paths, tallies, frozenset(docs_blocks["names"]))
 
     evidence: dict[str, Any] = {}
     conventions: dict[str, Any] = {}
@@ -1170,6 +1234,8 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
             "declared_column_count": documentation["declared_column_count"],
             "documented_column_count": documentation["documented_column_count"],
             "source_count": documentation["source_count"],
+            "docs_blocks": docs_blocks,
+            "written_conventions": _written_conventions(root, own),
         }
     )
 
@@ -1194,7 +1260,14 @@ def infer_conventions(path: str | Path) -> dict[str, Any]:
             "strong_instances": STRONG_INSTANCES,
             "weak_ratio": WEAK_RATIO,
         },
-        "inference_note": "Static inference only; dbt was not executed and no warehouse was contacted.",
+        "inference_note": "Static inference only; dbt was not executed and no warehouse was contacted."
+        + (
+            " Conventions are written down in "
+            + ", ".join(entry["path"] for entry in facts["written_conventions"])
+            + "; read them first. A written rule outranks any value inferred here."
+            if facts["written_conventions"]
+            else ""
+        ),
     }
 
 

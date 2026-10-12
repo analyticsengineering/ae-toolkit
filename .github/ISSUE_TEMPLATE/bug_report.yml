@@ -1,0 +1,52 @@
+name: Bug report
+description: Something the toolkit did wrong, or a gate that let something through or blocked something it should not have.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste credentials, production data, or personal data. If the bug lets a gate be bypassed, report it privately through SECURITY.md instead.
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install
+      options:
+        - Cursor plugin
+        - VS Code target
+        - Antigravity target
+        - Skills only (npx skills add)
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Run `python3 scripts/doctor.py --workspace <repo>` from your install and paste the result.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: request
+    attributes:
+      label: What you asked for
+      description: The request as you typed it, with anything sensitive replaced.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What a careful analytics engineer would have done
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What the toolkit did instead
+      description: Include the files it changed or the question it asked.
+    validations:
+      required: true
+  - type: textarea
+    id: repo
+    attributes:
+      label: The repository shape that matters
+      description: The models, YAML, or docs involved. A minimal synthetic reproduction is ideal.

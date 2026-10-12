@@ -37,6 +37,7 @@ DEFAULT_PATHS: dict[str, tuple[str, ...]] = {
     "seed-paths": ("seeds",),
     "analysis-paths": ("analyses",),
     "function-paths": ("functions",),
+    "check-paths": ("checks",),
 }
 DEFAULT_TARGET_PATH = "target"
 DEFAULT_PACKAGES_PATH = "dbt_packages"
@@ -58,8 +59,15 @@ ENGINE_EVIDENCE_FILES = (
     "setup.py",
     "setup.cfg",
 )
-FUSION_MARKER = re.compile(r"\bdbt[-_]fusion\b", re.I)
+FUSION_MARKER = re.compile(r"\bdbt[-_]fusion\b|\bdbt[-_]oss\b|^\s*dbt\s*(?:==|~=|>=)\s*2\.", re.I | re.M)
 CORE_MARKER = re.compile(r"\bdbt[-_]core\b", re.I)
+ENGINE_SYNONYMS = {"core": ENGINE_CORE, "v1": ENGINE_CORE, "fusion": ENGINE_FUSION, "v2": ENGINE_FUSION}
+ENGINE_LABELS = {ENGINE_CORE: "dbt v1 (Core)", ENGINE_FUSION: "dbt v2 (Fusion)", ENGINE_UNKNOWN: "unknown"}
+# dbt writes `metadata` first, so the version is near the top of even a very
+# large manifest and the rest of the file never needs to be read.
+ARTIFACT_HEAD_BYTES = 65536
+ARTIFACT_DBT_VERSION = re.compile(r'"dbt_version"\s*:\s*"(\d+)\.')
+VERSION_BOUND = re.compile(r"^\s*(>=|<=|==|=|>|<|~=)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 
 # Engine defaults for the unsuffixed relation dbt maintains alongside a
 # versioned model's own relations.
@@ -178,6 +186,9 @@ class DbtProjectLayout:
         self.seed_paths = _configured_paths(config, "seed-paths")
         self.analysis_paths = _configured_paths(config, "analysis-paths")
         self.function_paths = _configured_paths(config, "function-paths")
+        self.check_paths = _configured_paths(config, "check-paths")
+        self.document: dict[str, Any] = {}
+        self.unsupported_yaml: list[str] = []
         self.target_path = _configured_single(config, "target-path", DEFAULT_TARGET_PATH)
         self.packages_install_path = _configured_single(
             config, "packages-install-path", DEFAULT_PACKAGES_PATH
@@ -196,6 +207,7 @@ class DbtProjectLayout:
             }
             if prefix
         )
+        self.require_dbt_version = config.get("require-dbt-version")
         flags = config.get("flags")
         self.flags = flags if isinstance(flags, dict) else {}
         declared = self.flags.get("latest_version_pointer_enabled_by_default")
@@ -307,17 +319,89 @@ def _declared_engine(*roots: Path | None) -> tuple[str | None, str | None]:
         except OSError:
             continue
         value = document.get("engine") if isinstance(document, dict) else None
-        if isinstance(value, str) and value.strip().lower() in {ENGINE_CORE, ENGINE_FUSION}:
-            return value.strip().lower(), ".ae/project.yml"
+        if isinstance(value, str) and value.strip().lower() in ENGINE_SYNONYMS:
+            return ENGINE_SYNONYMS[value.strip().lower()], ".ae/project.yml"
     return None, None
 
 
-def infer_engine(dbt_root: Path | None, git_root: Path | None) -> tuple[str, str]:
+def _required_engine(requirement: Any) -> str | None:
+    """The engine a `require-dbt-version` range admits, when it admits only one.
+
+    `>=1.10.0,<3.0.0` runs on either major version and says nothing about which
+    one is in use; `>=2.0.0` and `<2.0.0` each rule one out.
+    """
+    if isinstance(requirement, str):
+        parts = [part for part in requirement.split(",") if part.strip()]
+    elif isinstance(requirement, list):
+        parts = [str(part) for part in requirement if str(part).strip()]
+    else:
+        return None
+    admits_v1, admits_v2 = True, True
+    for part in parts:
+        match = VERSION_BOUND.match(part)
+        if not match:
+            return None
+        operator, major_text = match.group(1) or "==", match.group(2)
+        major = int(major_text)
+        minor = int(match.group(3) or 0)
+        patch = int(match.group(4) or 0)
+        at_least_two = (major, minor, patch) >= (2, 0, 0)
+        if operator in {"==", "=", "~="}:
+            admits_v1 = admits_v1 and major < 2
+            admits_v2 = admits_v2 and major >= 2
+        elif operator in {">=", ">"}:
+            if at_least_two:
+                admits_v1 = False
+        elif operator == "<":
+            if not (major, minor, patch) > (2, 0, 0):
+                admits_v2 = False
+        elif operator == "<=" and major < 2:
+            admits_v2 = False
+    if admits_v1 and not admits_v2:
+        return ENGINE_CORE
+    if admits_v2 and not admits_v1:
+        return ENGINE_FUSION
+    return None
+
+
+def artifact_engine(target_dir: Path | None) -> tuple[str | None, str | None]:
+    """The engine that wrote the artifacts already on disk, if any did.
+
+    This describes whoever last ran dbt here, which is usually but not always
+    the engine the project is moving to, so it is the weakest evidence used.
+    """
+    if target_dir is None:
+        return None, None
+    for name in ("manifest.json", "run_results.json"):
+        candidate = target_dir / name
+        if not candidate.is_file():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8", errors="replace") as handle:
+                head = handle.read(ARTIFACT_HEAD_BYTES)
+        except OSError:
+            continue
+        match = ARTIFACT_DBT_VERSION.search(head)
+        if match:
+            major = int(match.group(1))
+            return (ENGINE_FUSION if major >= 2 else ENGINE_CORE), name
+    return None, None
+
+
+def infer_engine(
+    dbt_root: Path | None,
+    git_root: Path | None,
+    *,
+    require_dbt_version: Any = None,
+    target_dir: Path | None = None,
+) -> tuple[str, str]:
     """Which dbt engine this repository runs, and the evidence for saying so.
 
-    Static inference cannot ask dbt, so the only honest answers are what a
-    dependency pin states and what a human recorded. Defaulting to Core because
-    it is more common would decide behaviour the repository never declared.
+    Static inference cannot ask dbt, so the honest answers are what a human
+    recorded, what a dependency pin or the project's own version requirement
+    states, and, failing those, which engine wrote the artifacts on disk.
+    Defaulting to Core because it is more common would decide behaviour the
+    repository never declared.
     """
     declared, source = _declared_engine(dbt_root, git_root)
     if declared:
@@ -339,13 +423,27 @@ def infer_engine(dbt_root: Path | None, git_root: Path | None) -> tuple[str, str
                 continue
             fusion = fusion or bool(FUSION_MARKER.search(text))
             core = core or bool(CORE_MARKER.search(text))
-    if fusion and not core:
-        return ENGINE_FUSION, "a pinned dbt-fusion dependency"
-    if core and not fusion:
-        return ENGINE_CORE, "a pinned dbt-core dependency"
     if core and fusion:
-        return ENGINE_UNKNOWN, "both dbt-core and dbt-fusion are pinned"
-    return ENGINE_UNKNOWN, "no engine is pinned or declared"
+        return ENGINE_UNKNOWN, "both dbt v1 (dbt-core) and dbt v2 packages are pinned"
+
+    pinned = ENGINE_FUSION if fusion else ENGINE_CORE if core else None
+    required = _required_engine(require_dbt_version)
+    if pinned and required and pinned != required:
+        return ENGINE_UNKNOWN, (
+            f"a pinned {'dbt v2' if pinned == ENGINE_FUSION else 'dbt-core'} dependency "
+            f"contradicts require-dbt-version {require_dbt_version!r}"
+        )
+    if pinned == ENGINE_FUSION:
+        return ENGINE_FUSION, "a pinned dbt v2 dependency"
+    if pinned == ENGINE_CORE:
+        return ENGINE_CORE, "a pinned dbt-core dependency"
+    if required:
+        return required, f"require-dbt-version {require_dbt_version!r} admits only {ENGINE_LABELS[required]}"
+
+    written, artifact = artifact_engine(target_dir)
+    if written:
+        return written, f"the existing {artifact} was written by {ENGINE_LABELS[written]}"
+    return ENGINE_UNKNOWN, "no engine is pinned, declared, required, or recorded in artifacts"
 
 
 def git_root_for(path: Path) -> Path | None:
@@ -378,7 +476,12 @@ class ProjectContext:
         self.git_root = git_root
         self.sibling_projects = tuple(sibling_projects)
         self.discovery_note = discovery_note
-        self.engine, self.engine_evidence = infer_engine(dbt_root, git_root)
+        self.engine, self.engine_evidence = infer_engine(
+            dbt_root,
+            git_root,
+            require_dbt_version=layout.require_dbt_version if layout else None,
+            target_dir=self.target_dir(),
+        )
 
     @property
     def is_dbt_project(self) -> bool:
@@ -551,6 +654,8 @@ def resolve_project_context(
 
 def _layout_for(root: Path, project_file: Path | None) -> DbtProjectLayout:
     project: dict[str, Any] | None = None
+    nested: Any = None
+    unsupported: list[str] = []
     if project_file is not None and project_file.is_file():
         try:
             text = inspect_dbt._read_text(project_file)
@@ -560,10 +665,13 @@ def _layout_for(root: Path, project_file: Path | None) -> DbtProjectLayout:
         # `parse_dbt_project` reads top-level scalars and lists only, which is
         # all the path configuration needs. Behaviour flags live one level down,
         # so the nested reader supplies them.
-        nested, _unsupported = parse_yaml_checked(text)
+        nested, unsupported = parse_yaml_checked(text)
         if isinstance(nested, dict) and isinstance(nested.get("flags"), dict):
             project["flags"] = nested["flags"]
-    return DbtProjectLayout(root, project)
+    layout = DbtProjectLayout(root, project)
+    layout.document = nested if isinstance(nested, dict) else {}
+    layout.unsupported_yaml = unsupported
+    return layout
 
 
 def _parser() -> argparse.ArgumentParser:

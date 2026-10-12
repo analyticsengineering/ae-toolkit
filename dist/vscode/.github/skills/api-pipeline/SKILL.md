@@ -27,7 +27,7 @@ Default silently to Work mode and produce an implementation-ready architecture a
 ## Inspection procedure
 
 1. Define the data product: consumers, entities, grain, freshness, completeness, history, and service objectives.
-2. Read authoritative API behavior and record unknowns. Do not infer pagination, ordering, or deletion behavior from one response.
+2. Read authoritative API behavior and record unknowns. Do not infer pagination, ordering, or deletion behavior from one response. When the request says an endpoint behaves like another one (same pagination, same auth), read that endpoint's own documentation first. If it says otherwise, implement what it says, put the contradiction (doc path and the line that states the behaviour) in the first lines of the response, and do not write code for the premise: a loader built on the wrong pagination scheme silently stops after the first page.
 3. Design architecture before code:
    - trigger/orchestration;
    - authentication via runtime secret reference;

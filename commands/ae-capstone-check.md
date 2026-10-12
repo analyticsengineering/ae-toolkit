@@ -9,8 +9,7 @@ Apply the `learning-coach`, `senior-ae-reviewer`, and `pipeline-architect` persp
 
 ## Execution boundary
 
-- **Local Basic (default/free):** Inspect only local capstone artifacts and `.ae/exercise.json`. Never require or call MCP.
-- **Connected Advanced:** Use external grading, catalog, or warehouse context only after explicit user request, authentication, a destination and redacted content preview, and explicit approval. Use read-only access.
+Inspect only local capstone artifacts and `.ae/exercise.json`. Never require or call MCP, and never run anything against a warehouse. This check submits nothing.
 
 ## Workflow
 
@@ -20,9 +19,9 @@ Apply the `learning-coach`, `senior-ae-reviewer`, and `pipeline-architect` persp
 4. In Assessment mode, perform a read-only review. Do not edit, complete missing deliverables, expose hidden answers, or provide replacement SQL/code.
 5. Map every conclusion to supplied criteria using Evidence, Risk or learning impact, Recommendation, Verification, severity, and confidence.
 6. Separate blockers, incomplete evidence, and optional improvements. Do not confuse polish with correctness.
-7. This is preflight only. Human review remains authoritative for submission/certification decisions.
+7. This is preflight only. Human review remains authoritative for submission and certification decisions.
 
-Keep connected checks in a separately approved section and remain within analytics engineering.
+Remain within analytics engineering.
 
 ## Output
 
@@ -32,4 +31,4 @@ Return `# Capstone Readiness` with:
 - Categories
 - Blocking issues
 - Recommended improvements
-- Submission CTA
+- Next step before submitting

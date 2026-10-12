@@ -1,0 +1,4 @@
+{
+  "metadata": {"dbt_version": "2.0.1", "generated_at": "2026-10-01T09:00:00Z", "invocation_id": "earlier-run"},
+  "results": [{"unique_id": "model.analytics_quiet.one", "status": "success", "message": "SUCCESS 1"}]
+}

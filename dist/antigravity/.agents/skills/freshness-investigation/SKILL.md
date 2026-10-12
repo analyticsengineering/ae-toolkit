@@ -1,11 +1,18 @@
 ---
 name: freshness-investigation
-description: Investigates whether analytical data is ready by separating configured schedules and freshness expectations from locally observed timestamps and run artifacts. Use when data appears stale, late, incomplete, or unavailable; it explains timing evidence and gaps without inventing runtime history or querying external systems.
+description: Investigates whether analytical data is ready by separating configured schedules and freshness expectations from locally observed timestamps and run artifacts. Use when data appears stale, late, incomplete, or unavailable, and before raising a freshness threshold or silencing a failing check; it explains timing evidence and gaps without inventing runtime history or querying external systems.
 ---
 
 # Freshness Investigation
 
 Explain data readiness from configured expectations and observed timing evidence. A schedule describes intent; only current, inspected runtime evidence describes what happened.
+
+## First decision: is the check right, or is the data late?
+
+A request to raise a freshness threshold, lower a severity, or silence a check is a freshness investigation first. Before editing any threshold, read the run artifacts and logs (`sources.json`, `run_results.json`, run summaries, connector or loader logs) and find why the check fails. Then read what the threshold mirrors: an SLA document, an exposure, or a freshness note that promises a consumer a lag.
+
+- When the data really is late (a loader error, a rejected credential, a stopped sync) and the threshold mirrors a documented promise, do not change it, even when asked for a specific number. Return `# Freshness Check Is Correct`: the failing boundary with file and line, the promise and its consumer, the fix (restore the loader, backfill, tell the consumers the data is stale), and one direct question asking whether the promise's owner has agreed to a new threshold.
+- When the threshold is stricter than any documented promise or than the source's normal cadence, adjusting it is ordinary work; cite the promise or cadence that justifies the new value.
 
 ## When to use
 

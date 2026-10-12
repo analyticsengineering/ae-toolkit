@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Fail-closed approval gate for AnalyticsEngineering.com MCP calls."""
+"""Fail-closed approval gate for MCP tools that reach a warehouse or the dbt platform.
+
+The toolkit ships no MCP server of its own. Teams commonly add the dbt MCP server,
+whose tools can build models, run arbitrary SQL, query metrics, and trigger jobs:
+the same warehouse execution the shell gate holds for approval when it arrives as
+`dbt run`. This gate holds those tools the same way, and stands aside for every
+other server.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +26,21 @@ import host_contract  # noqa: E402
 import redact_secrets  # noqa: E402
 
 
-SERVER_NAME = "analytics-engineering"
-SERVER_HOST = "mcp.analyticsengineering.com"
+DBT_SERVER = re.compile(r"(?i)(?:^|[^a-z])dbt(?:[^a-z]|$)")
+DBT_HOSTS = ("getdbt.com", "dbt.com")
+DBT_LAUNCH = re.compile(r"(?i)\bdbt[-_]mcp\b")
+# Tools that execute against the warehouse or change state on the dbt platform.
+WAREHOUSE_TOOLS = frozenset(
+    {
+        "build", "run", "test", "seed", "snapshot", "show", "compile", "clone", "retry",
+        "freshness", "run_operation", "docs", "execute_sql", "text_to_sql", "query_metrics",
+        "generate_source", "generate_model_yaml", "generate_staging_model",
+        "trigger_job_run", "retry_job_run", "cancel_job_run",
+    }
+)
+# Tools that read project metadata or compile against the platform without executing.
+METADATA_TOOLS = frozenset({"parse", "list", "ls", "get_metrics_compiled_sql"})
+METADATA_PREFIXES = ("get_", "list_", "search_")
 CONTENT_KEY = re.compile(
     r"(sql|code|content|query|data|dataset|schema|submission|answer|diff|"
     r"requirement|profile|manifest|model|file|path|repo|company)",
@@ -142,10 +162,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     server_name = host_contract.extract_mcp_server(payload)
-    server_url = payload.get("mcp_server_url") or payload.get("url") or ""
-    server_host = urlparse(server_url).hostname if isinstance(server_url, str) else None
-    targets_ae = server_name == SERVER_NAME or server_host == SERVER_HOST
-
     if not server_name:
         print(
             host_contract.render(
@@ -160,13 +176,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    if not targets_ae:
+    if not is_dbt_server(server_name, payload):
         print(
             host_contract.render(
                 response(
                     "allow",
-                    "This MCP call does not target AnalyticsEngineering.com.",
-                    "The plugin cloud gate does not govern other identified MCP servers.",
+                    "This MCP call does not target a dbt server.",
+                    "The toolkit's MCP gate governs only dbt servers.",
                     "unrelated-mcp-server",
                 ),
                 agent_host,
@@ -174,15 +190,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    if server_name == SERVER_NAME and server_host not in (None, SERVER_HOST):
+    tool = mcp_tool(payload)
+    if tool in METADATA_TOOLS or tool.startswith(METADATA_PREFIXES):
         print(
             host_contract.render(
-                response(
-                    "deny",
-                    "Cloud transmission was blocked because the Analytics Engineering MCP URL did not match the expected host.",
-                    "Verify the MCP server configuration before retrying.",
-                    "server-url-mismatch",
-                ),
+                response("allow", "", "Reading dbt project metadata does not execute against the warehouse.", "dbt-metadata"),
                 agent_host,
             )
         )
@@ -195,8 +207,8 @@ def main(argv: list[str] | None = None) -> int:
             host_contract.render(
                 response(
                     "deny",
-                    "Potential secret material was detected in the selected content. Redact it before using connected analysis.",
-                    f"Best-effort secret detection flagged {secret_path}; do not transmit this request.",
+                    "Potential secret material was detected in this dbt MCP request. Redact it before retrying.",
+                    f"Best-effort secret detection flagged {secret_path}; do not send this request.",
                     "potential-secret",
                 ),
                 agent_host,
@@ -204,41 +216,44 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    serialized = json.dumps(tool_input, ensure_ascii=False, default=str)
-    discovered, walk_truncated = content_fields(tool_input)
-    fields = sorted(set(discovered))
-    shown = fields[:PREVIEW_FIELD_LIMIT]
-    field_summary = ", ".join(shown) if shown else "request parameters"
-
-    omissions: list[str] = []
-    if len(fields) > PREVIEW_FIELD_LIMIT:
-        omissions.append(f"{len(fields) - PREVIEW_FIELD_LIMIT} further named fields")
-    if walk_truncated:
-        omissions.append(
-            f"list entries beyond the first {PREVIEW_LIST_LIMIT}, which are still sent"
-        )
-
-    message = (
-        "This analysis will send the following selected content to "
-        f"AnalyticsEngineering.com: {field_summary}. "
-        f"The full payload is {payload_shape(tool_input)}, approximately "
-        f"{len(serialized.encode('utf-8'))} bytes."
+    known = tool in WAREHOUSE_TOOLS
+    what = (
+        f"The dbt MCP tool `{tool or 'unknown'}` "
+        + ("executes against your warehouse or the dbt platform" if known else "is not one AE recognises, so it may execute against your warehouse")
+        + f". The request is {payload_shape(tool_input)}, approximately "
+        f"{len(json.dumps(tool_input, ensure_ascii=False, default=str).encode('utf-8'))} bytes."
     )
-    if omissions:
-        message += " This preview omits " + " and ".join(omissions) + "."
-    message += " No content is sent until you approve."
     print(
         host_contract.render(
             response(
                 "ask",
-                message,
-                "Proceed only after explicit approval. Send the minimum selected content required for this connected workflow.",
-                "connected-analysis-approval",
+                what + " Nothing runs until you approve.",
+                "Proceed only after explicit approval, as for `dbt run` in the shell. Prefer a static or local check when one answers the question.",
+                "dbt-warehouse-approval" if known else "dbt-unknown-tool-approval",
             ),
             agent_host,
         )
     )
     return 0
+
+
+def is_dbt_server(server_name: str, payload: dict[str, Any]) -> bool:
+    server_url = payload.get("mcp_server_url") or payload.get("url") or ""
+    host = (urlparse(server_url).hostname or "") if isinstance(server_url, str) else ""
+    launch = payload.get("command")
+    return (
+        bool(DBT_SERVER.search(server_name))
+        or any(host == h or host.endswith("." + h) for h in DBT_HOSTS)
+        or (isinstance(launch, str) and bool(DBT_LAUNCH.search(launch)))
+    )
+
+
+def mcp_tool(payload: dict[str, Any]) -> str:
+    """The tool's own name, without the `mcp__<server>__` prefix some hosts add."""
+    name = host_contract.tool_name(payload)
+    if name.lower().startswith("mcp") and name.count("__") >= 2:
+        name = name.split("__", 2)[2]
+    return name.strip().lower().replace("-", "_")
 
 
 if __name__ == "__main__":

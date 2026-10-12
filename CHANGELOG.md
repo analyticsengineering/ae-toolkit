@@ -4,7 +4,41 @@ All notable changes to Analytics Engineering Toolkit are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.0] - 2026-10-11
+
+This release reads dbt v2, enforces the stop before a change to something other teams depend on, installs outside Cursor, and is the first with published behavioral evidence. In paired runs on two sets of tasks written by a separate author who never saw the toolkit, an agent with AE Toolkit missed 40% and 38% fewer of the checks a task required than the same agent alone. The first set's margin is statistically clear; the second set's is smaller, and not conclusive on its own. [docs/EVALUATION.md](docs/EVALUATION.md) has the method, the numbers, and their limits. Behavioral runs used one model, Cursor Composer 2.5, and only the Cursor plugin. The VS Code, Antigravity, and skills-only installs were not behaviorally measured.
+
+### Removed
+
+- The toolkit no longer configures an MCP server. The `mcp.json` entry pointed at a service that was never deployed, so every host showed a server that could not connect. Nothing in the toolkit depended on it.
+
+### Added
+
+- dbt v2 support. `scripts/dbt_capabilities.py` answers every question that differs between dbt v1 and dbt v2: which engine runs the project, whether JSON artifacts are written, and whether the Information Schema, checks, static analysis, column-level lineage, and dbt State apply. Each answer names its basis and evidence, so a configured feature is never reported as a proven one. The engine is inferred from `require-dbt-version`, v2 distribution pins, and the version recorded in existing artifacts; conflicting evidence stays unknown. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) lists what is supported, partially supported, and not yet supported on each engine.
+- Results are read the way dbt v2 reports them. Nodes that dbt State reused or cloned are listed as not executed rather than counted as passing evidence. A command or project that turns JSON artifacts off is reported as not written, instead of an earlier run's files being read as its outcome, and planned steps add `--write-json` when a project disables it. `freshness.json` is recognized and tied to its invocation but not interpreted, because dbt publishes no schema for it.
+- The published-model guard, on Cursor. When a message asks to rename, remove, retype, or redefine something, or to change how it is counted or calculated, edits that would change what a published model means are paused until the requester replies, by any edit tool or shell command and however the request is worded. Published means public access, an enforced contract, or a consumer the repository shows (an exposure, semantic model, metric, or LookML view). The pause also covers the models that feed a published model, edits that would change how a snapshot that something reads matches its stored history, and exposure edits that would stop listing a model. Refactors, materialization changes, docs, tests, and new models go straight through. The guard stores no message text, reads only local files, and allows the edit when it cannot judge within three seconds. `guard_published_models: false` in `.ae/project.yml` turns it off.
+- Four stops before the first edit, in the always-on safety rules: a published contract would change; a correctness-critical choice such as grain, lateness, or delete behavior is still open; a check would be loosened to quiet a real failure; or a snapshot's stored history would be reinterpreted. Each ends the turn with the evidence, an option that leaves consumers unchanged where one exists, and one question. A requested change that keeps every published column's name, type, grain, and meaning goes ahead without asking.
+- Conventions a team has written down (a README section, CONTRIBUTING, a style guide) now outrank conventions inferred from existing files, and existing docs blocks are reused instead of rewritten.
+- When a request's premise contradicts a repository file, including documentation, the file wins, and the response says which premise it did not follow and why. Before deciding, the agent traces what a change depends on: callers of a changed macro or package, readers of a column whose meaning changes, and when each joined input loads. A defect it finds inside the requested scope is fixed rather than offered as a follow-up.
+- Diagrams drawn from repository files (`references/diagrams.md`): a blast-radius diagram when a change reaches three or more consumers, and grain and refactor diagrams where they carry information.
+- `scripts/doctor.py` and `/ae-doctor` check that an install works on this machine: the Python version, the interpreter the hooks will actually run under, each gate on a payload it must refuse or hold, hook wiring and absolute paths on VS Code and Antigravity, and a symlinked Cursor install, which Cursor skips without an error.
+- Skills install on their own with `npx skills add analyticsengineering/ae-toolkit`. Skills are now authored under `src/skills/`, and the root `skills/` folder, which skills installers read first, holds generated copies. Each one carries the scripts and references it calls and the always-on rules, so a skill copied by itself still runs its inspectors; previously thirteen skills pointed at scripts that a skills-only install never copied. The README has a support matrix for what each install path includes.
+
+### Changed
+
+- Incremental models settle lateness and delete behavior from documentation before writing anything, and ask when neither is stated. The lookback filters on the same expression that produces the destination's time key, so every rebuilt period is complete, and `append` is not used for an aggregate whose periods can still change.
+- Tests are not scoped, downgraded, or backfilled with placeholders to quiet failing rows until those rows are classified as exempt by documentation or simply late.
+- Package upgrades sweep every call into the upgraded package rather than fixing only the one that failed.
+- A request that forbids running against a warehouse ("no Snowflake") no longer changes the SQL dialect or drops platform configuration.
+- In a repository with no dbt project, a request for a dbt model writes no dbt files; the agent says what the repository uses instead and asks.
+- The README leads with outcomes, installation, evaluation, and the relationship with dbt's own skills. Detailed installation and troubleshooting moved to [docs/INSTALL.md](docs/INSTALL.md), and issue templates were added for incorrect reasoning, installation problems, and unsupported dbt features.
+- `dbt show --info <view>` is allowed as a local metadata read. Any other flag on `show` still requires approval, as does `dbt state explain`.
+- Python 3.9 is the documented minimum, and CI runs 3.9 and 3.13 on Linux and macOS. Windows runs as an experimental job and is not yet supported.
+- `/ae-hint`, `/ae-grade`, `/ae-diagnostic`, and `/ae-capstone-check` work locally. Each waited on that service before, so `/ae-hint` and `/ae-grade` produced nothing. Hints follow the exercise's own hint ladder and allowed assistance, `/ae-grade` returns a self-check against the exercise's rubric that says plainly it is not an official grade, and none of them submits or sends anything.
+
+### Security
+
+- The MCP gate now governs the dbt MCP server. Tools that execute against the warehouse or change state on the dbt platform (`build`, `run`, `test`, `show`, `compile`, `execute_sql`, `text_to_sql`, `query_metrics`, codegen, and job triggers) ask for approval, as their shell equivalents already did; an unrecognised dbt tool asks rather than being assumed safe; a request carrying a likely credential is refused. Metadata tools pass, and other MCP servers are not governed. The server is recognised by name, by a dbt platform host, or by a `dbt-mcp` launch command.
 
 ## [1.3.1] - 2026-10-10
 

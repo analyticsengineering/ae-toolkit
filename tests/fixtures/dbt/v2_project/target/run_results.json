@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/run-results/v6.json",
+    "dbt_version": "2.0.1",
+    "generated_at": "2026-10-05T12:00:00Z",
+    "invocation_id": "v2-invocation-a"
+  },
+  "results": [
+    {"unique_id": "model.analytics_v2.stg_orders", "status": "success", "message": "SUCCESS 1", "execution_time": 0.4},
+    {"unique_id": "model.analytics_v2.fct_orders", "status": "success", "message": "Cloned from other environment", "execution_time": 0.1},
+    {"unique_id": "test.analytics_v2.unique_stg_orders_order_id", "status": "reused", "message": null, "execution_time": 0.0},
+    {"unique_id": "test.analytics_v2.not_null_stg_orders_order_id", "status": "pass", "message": null, "execution_time": 0.2}
+  ],
+  "elapsed_time": 1.2
+}

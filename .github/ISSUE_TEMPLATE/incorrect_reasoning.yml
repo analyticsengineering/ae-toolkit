@@ -1,0 +1,75 @@
+name: Incorrect reasoning
+description: The agent did the wrong analytics-engineering thing with the toolkit installed, such as wrong grain, a missed consumer, a loosened check, an unnecessary question, or a claim that something was verified when it was not.
+labels: [reasoning]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        These reports are the most useful thing you can send. A minimal synthetic reproduction is ideal: a few models and YAML files, with names and values invented, that still show the mistake.
+
+        Do not paste credentials, production data, customer data, or personal data. Replace real table and column names if they are sensitive.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - Did the work when it should have stopped and asked
+        - Stopped or asked when it should have done the work
+        - Wrong grain, join, or aggregation
+        - Missed a downstream consumer or blast radius
+        - Loosened a test or check to make it pass
+        - Claimed something was verified when it was not
+        - Ignored a convention the repository states or demonstrates
+        - Introduced syntax or a pattern the project does not use
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install
+      options:
+        - Cursor plugin
+        - VS Code target
+        - Antigravity target
+        - Skills only (npx skills add)
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The AI model the agent was using, if you know it.
+  - type: textarea
+    id: request
+    attributes:
+      label: What you asked for
+      description: The request as you typed it, with anything sensitive replaced.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What the agent did
+      description: The files it changed, the question it asked, or the claim it made. A redacted excerpt of its response helps.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What a careful analytics engineer would have done, and why
+      description: Point to the file, line, or documented fact that settles it.
+    validations:
+      required: true
+  - type: textarea
+    id: repo
+    attributes:
+      label: Reproduction
+      description: The repository shape that matters, or a link to a minimal synthetic repository.
+  - type: checkboxes
+    id: baseline
+    attributes:
+      label: Comparison
+      options:
+        - label: I tried the same request without the toolkit and the agent did better.
+        - label: I tried the same request several times and the mistake repeats.

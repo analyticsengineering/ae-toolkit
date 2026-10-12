@@ -1,0 +1,21 @@
+name: analytics_v2
+version: '1.0'
+config-version: 2
+profile: analytics
+require-dbt-version: ">=2.0.0"
+model-paths: [models]
+
+info_schema:
+  version: 1
+
+flags:
+  manage_state: true
+
+models:
+  analytics_v2:
+    +static_analysis: strict
+    staging:
+      +materialized: view
+    marts:
+      legacy:
+        +static_analysis: "off"

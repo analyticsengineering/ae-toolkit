@@ -23,6 +23,8 @@ ARTIFACT_FILES = {
     "sources": "sources.json",
     "catalog": "catalog.json",
     "semantic_manifest": "semantic_manifest.json",
+    # dbt v2's `dbt freshness`, which covers models as well as sources.
+    "freshness": "freshness.json",
 }
 
 # dbt writes deferral state to a separate directory by convention. Neither name
@@ -39,6 +41,7 @@ OPERATION_ARTIFACTS = {
     "parse": "manifest",
     "resolve": None,
     "source_freshness": "sources",
+    "freshness": "freshness",
     "test": "run_results",
     "model_validation": "run_results",
 }
@@ -183,6 +186,9 @@ class Artifact:
     schema_version: str | None = None
     dbt_version: str | None = None
     document: Any = None
+    # The project or environment turns JSON artifacts off, so dbt leaves
+    # whatever an earlier run wrote and adds nothing.
+    writing_disabled: bool = False
 
     @property
     def stale(self) -> bool:
@@ -192,9 +198,11 @@ class Artifact:
     def trust(self) -> str:
         """A missing artifact and an old one are different problems."""
         if not self.present:
-            return "missing"
+            return "not-written" if self.writing_disabled else "missing"
         if not self.valid:
             return "unreadable"
+        if self.writing_disabled:
+            return "unproven"
         return "stale" if self.stale else "current"
 
     def as_dict(self, root: Path | None = None) -> dict[str, Any]:
@@ -258,6 +266,7 @@ class ArtifactInventory:
     current: dict[str, Artifact]
     state_dir: Path | None = None
     prior: dict[str, Artifact] | None = None
+    json_artifacts: dict[str, Any] | None = None
 
     @property
     def has_prior_state(self) -> bool:
@@ -300,11 +309,15 @@ class ArtifactInventory:
             return artifact.path if artifact and artifact.present else None
 
         if operation is None:
-            return {"run_results": located("run_results"), "sources": located("sources")}
+            return {
+                "run_results": located("run_results"),
+                "sources": located("sources"),
+                "freshness": None,
+            }
         kind = OPERATION_ARTIFACTS.get(operation)
         return {
-            "run_results": located("run_results") if kind == "run_results" else None,
-            "sources": located("sources") if kind == "sources" else None,
+            name: located(name) if kind == name else None
+            for name in ("run_results", "sources", "freshness")
         }
 
     def as_dict(self, root: Path | None = None) -> dict[str, Any]:
@@ -316,6 +329,8 @@ class ArtifactInventory:
             "has_prior_state": self.has_prior_state,
             "state_is_stale": self.state_is_stale,
         }
+        if self.json_artifacts is not None:
+            payload["json_artifacts"] = self.json_artifacts
         if self.state_dir is not None:
             payload["state_path"] = Path(self.state_dir).as_posix()
         if self.prior:
@@ -349,12 +364,18 @@ def inventory_artifacts(context: Any, *, state_dir: str | Path | None = None) ->
     """Collect current and prior artifacts using the project's configured paths."""
     if not getattr(context, "is_dbt_project", False):
         return ArtifactInventory(None, {})
+    import dbt_capabilities
+
     root = context.dbt_root
     target_dir = context.target_dir()
+    writing = dbt_capabilities.json_artifacts_written(context)
     current = {
         kind: read_artifact(kind, target_dir / filename)
         for kind, filename in ARTIFACT_FILES.items()
     }
+    if writing.value is False:
+        for artifact in current.values():
+            artifact.writing_disabled = True
     resolved_state = _state_directory(
         root, target_dir, Path(state_dir).expanduser().resolve() if state_dir else None
     )
@@ -364,7 +385,13 @@ def inventory_artifacts(context: Any, *, state_dir: str | Path | None = None) ->
             kind: read_artifact(kind, resolved_state / filename)
             for kind, filename in ARTIFACT_FILES.items()
         }
-    return ArtifactInventory(target_dir, current, resolved_state, prior)
+    return ArtifactInventory(
+        target_dir,
+        current,
+        resolved_state,
+        prior,
+        json_artifacts=writing.as_dict() if writing.basis != "default" else None,
+    )
 
 
 def manifest_nodes(document: Any) -> dict[str, dict[str, Any]]:

@@ -1,0 +1,11 @@
+{
+  "metadata": {
+    "dbt_version": "2.0.1",
+    "generated_at": "2026-10-05T12:05:00Z",
+    "invocation_id": "v2-invocation-b"
+  },
+  "results": [
+    {"unique_id": "source.analytics_v2.shop.orders", "status": "pass"},
+    {"unique_id": "model.analytics_v2.fct_orders", "status": "warn"}
+  ]
+}

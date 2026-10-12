@@ -1,23 +1,25 @@
 ---
 name: ae-grade
-description: Grade the active analytics-engineering exercise against its supplied rubric without editing or revealing the answer.
+description: Self-check an analytics-engineering exercise submission against its supplied rubric, locally and read-only, without editing or revealing the answer.
 ---
 
-# Grade an Exercise Submission
+# Self-Check an Exercise Submission
 
-Apply the `learning-coach` agent's Assessment workflow. This is an explicitly triggered connected grading command.
-
-## Execution boundary
-
-- **Local Basic:** Read `.ae/exercise.json`, rubric references, and the learner-selected submission only to validate scope and prepare a minimal redacted preview. Do not call MCP, assign a grade, or edit files.
-- **Connected Advanced:** Required for grading. Authenticate with the configured grading provider, show the provider and exact redacted content preview, and obtain explicit approval before transmission. If any gate fails, stop without grading.
+Apply the `learning-coach` agent's Assessment workflow. This runs locally against the rubric the exercise supplies. It is a self-check, not an official grade: it records nothing, submits nothing, and sends nothing anywhere.
 
 ## Workflow
 
-1. Require a valid `.ae/exercise.json` in Assessment mode with exercise identity, permitted artifacts, and rubric or criteria. Do not invent criteria or silently change modes.
-2. Freeze the submission scope. The first grading pass is strictly read-only: never edit, format, fix, or execute destructive actions.
-3. Remove secrets, credentials, PII, raw data, unrelated files, hidden answers, and unnecessary context from the payload.
-4. Authenticate, show destination, permissions, redacted payload, and risks, then wait for explicit approval; command invocation alone is not approval.
-5. After approval, evaluate only against supplied criteria and authorized tests. Separate correctness evidence from style and from unavailable evidence.
-6. Return score, rubric categories, passed checks, failed checks, and next actions, with criterion-level evidence and confidence.
-7. Never reveal the expected answer, provide replacement SQL/code, or edit the submission. Offer conceptual next steps only.
+1. Read `.ae/exercise.json` for exercise identity, permitted artifacts, and the rubric or the path to it. If no rubric or criteria are supplied, say so and stop; do not invent criteria.
+2. Freeze the submission scope to the permitted artifacts. The whole pass is read-only: never edit, format, fix, or run anything against a warehouse.
+3. Evaluate only against the supplied criteria. Static checks (parsing, grain reasoning, test coverage, naming) are fine; anything that needs execution is reported as unverified, not passed.
+4. Separate correctness evidence from style and from evidence that is unavailable locally.
+5. Never reveal the expected answer, write replacement SQL or code, or edit the submission. Offer conceptual next steps only.
+
+## Output
+
+Return `# Local Self-Check` with:
+
+- a first line stating this is a local self-check against the supplied rubric, not an official grade or submission;
+- a score per rubric category, with the criterion and the evidence (file and line) behind each;
+- passed checks, failed checks, and checks that could not be verified locally;
+- next actions, conceptual only.

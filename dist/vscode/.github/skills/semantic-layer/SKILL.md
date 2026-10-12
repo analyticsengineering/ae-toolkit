@@ -7,6 +7,10 @@ description: Implements or reviews MetricFlow and dbt semantic-layer artifacts w
 
 Implement or review repository-native MetricFlow/dbt semantic artifacts. Business meaning comes from an approved metric contract, not from YAML.
 
+## First decision: is the definition settled?
+
+Before writing a metric, search models, semantic YAML, analyses, BI files, and docs for existing calculations of it. If the request or an approved contract does not fix the definition and the repository holds more than one live candidate, return the candidates, where each is used, and how their values differ, then ask which one becomes official. No semantic file is written that turn. Choosing the candidate that is closest to existing semantic resources is still choosing for the requester.
+
 ## When to use
 
 - Review or author dbt semantic models, entities, dimensions, measures, metrics, and saved queries supported by the detected project version.

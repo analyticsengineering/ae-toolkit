@@ -1,0 +1,85 @@
+---
+name: model-tests
+description: Designs and reviews tests for analytical model behavior and data contracts. Use when adding generic, singular, unit, relationship, key, accepted-value, or expression tests; when investigating missing, redundant, or misplaced model-test coverage; when translating a modeled risk into a test; or when build-model needs tests for a model.
+---
+
+# Model Tests
+
+Turn demonstrated model risks and contracts into the smallest tests that would detect them.
+
+## When to use
+
+- Add or review tests for model keys, relationships, allowed values, expressions, business rules, or transformation behavior.
+- Identify missing, redundant, contradictory, brittle, or incorrectly scoped model-test coverage.
+- Translate grain, join, null, enumeration, and regression risks into generic, singular, or unit tests.
+- When `build-model` reaches its testing step, perform this discovery automatically; users do not need to invoke another skill.
+- Do not use for source-level tests, prose documentation, or YAML-only reorganization unless those domains are independently triggered.
+
+## Mode and conventions
+
+Read `.ae/exercise.json` when present and honor its mode, constraints, rubric, allowed tools, and artifacts. Otherwise use a user-requested mode; if none is requested, silently use **Work**.
+
+- **Work:** design evidence-backed tests and make only authorized changes.
+- **Learn:** expose risks through a hint ladder and let the learner author the tests.
+- **Assessment:** evaluate submitted tests against the stated rubric without supplying replacements or editing them.
+
+Read `.ae/project.yml` first and treat human edits as authoritative. If absent, run `python3 "${CURSOR_PLUGIN_ROOT}/scripts/infer_conventions.py" <project-root> --json` and inspect neighboring model YAML, singular tests, unit tests, packages, and macros. Infer test syntax, placement, arguments, severity, naming, and key defaults from repository evidence. Apply strong conventions silently, state weak assumptions, ask about genuine splits, and label defaults when evidence is absent.
+
+## Fixing a failing test
+
+Before editing a failing test, classify the failing rows from the documentation.
+
+- **Exempt:** the documentation says the value never applies to those rows. Scoping the test to the rows it applies to is ordinary work.
+- **Late:** the value applies but has not arrived. Wording such as "until", "pending", "not yet", "once X ships", a ticket number, or a named owner of the gap means late, not exempt, and so does a column described as required for a downstream use. A known upstream gap is a defect with an owner, not a documented exception.
+
+For late rows the test is right. A `where` filter, `severity: warn`, a placeholder coalesced into the column, or a description rewritten around the gap all hide rows the consumer needs. Change nothing; name the rows, the gap's owner, and who is hurt, and ask how to proceed. That is the complete answer, even when the request says to make the build green or to fix it the same way as another test.
+
+## Procedure
+
+1. State the model grain, candidate key, joins, filters, transformations, and documented contract from local artifacts.
+2. Inventory existing tests and distinguish what each actually proves from what its name suggests.
+3. Rank concrete failure risks by impact and likelihood. Add a test only when its failing rows and protected behavior can be stated.
+4. Use the least complex demonstrated test form: built-in generic, installed package or project macro, singular SQL, then unit test when fixture-level transformation behavior is the subject.
+5. Attach key tests only to a key the model logic can support, and always test the grain the model states. This holds when the request names other tests: "not_null on every column" or "add docs and tests" adds to the grain test rather than replacing it, so add the grain test alongside and list it. For composite grain, follow the repository's established combination test or singular-test pattern; when there is none, use `dbt_utils.unique_combination_of_columns` if dbt_utils is installed, otherwise a singular test returning grain combinations that occur more than once. A `unique` test on a row identifier does not prove a composite grain.
+6. Add relationship tests only when the intended referential rule and null policy are known. Do not turn optional relationships into false failures.
+7. Keep tests at the model whose contract they protect; do not duplicate upstream checks unless this model can reintroduce the defect.
+8. Confirm macros, packages, fixtures, refs, sources, and columns referenced by each proposed test exist locally.
+9. Apply explicitly requested, reversible test additions and edits in project-owned YAML, SQL, or synthetic fixtures without asking for a second approval. Preview and ask before deleting tests, weakening an established contract, or expanding beyond the requested model.
+10. If composing with `build-model`, return tests, protected risks, paths, and any unresolved contract gate; do not redo source setup, model SQL, documentation, or structural YAML cleanup.
+
+## Evidence required
+
+For every proposed test, cite the SQL, contract, requirement, incident, or downstream use establishing the invariant. State the expected failing rows or fixture behavior and why the chosen model is the correct boundary. Report convention counts when available and mark warehouse-dependent assumptions unverified.
+
+## Failure modes
+
+- Adding `unique` because a column looks like an ID without establishing model grain.
+- Treating `not_null` plus `unique` as proof of business correctness.
+- Testing optional relationships as mandatory or ignoring accepted null semantics.
+- Calling values that are late or missing "legitimately null" so a failing test can be scoped green.
+- Duplicating upstream tests that cannot fail because of this model's logic.
+- Introducing a package macro or test syntax absent from project dependencies.
+- Writing a singular test whose passing condition is reversed or whose scope is unbounded.
+- Confusing test YAML placement with structural YAML maintenance.
+- Running dbt or querying a warehouse instead of reporting execution as unverified.
+
+## Output contract
+
+For ordinary creation or editing, return `# Model Tests` with: Changed; Why each test exists; Verified; Remaining uncertainty. Name the model grain and the risk protected by each test. Use formal severity and evidence findings only when reviewing coverage or reporting a material risk.
+
+## Verification
+
+- Statically validate each model, column, macro, package, fixture, `ref`, and `source` reference.
+- Confirm generic-test argument syntax matches the repository's dbt version and examples.
+- Read singular tests as assertions: zero returned rows must mean success.
+- Confirm tests are capable of failing for the stated defect and are not exact duplicates.
+- Parse proposed YAML and SQL with available local static tools.
+- Propose the smallest `dbt test` or `dbt build --select` command without running it.
+
+## Safety/privacy
+
+- Local Basic only: use local files and static local tools; never call MCP, execute dbt, or contact a warehouse.
+- Use synthetic fixtures only; never copy raw production rows, PII, credentials, or sensitive values into tests.
+- New files may be created and must be listed.
+- Explicitly requested reversible test edits may proceed; deletion, contract weakening, and scope expansion require preview, blast radius, and approval.
+- In Assessment mode, perform read-only evaluation.

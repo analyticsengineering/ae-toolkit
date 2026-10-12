@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If AE Toolkit supports your work or research, cite the software using this metadata."
+title: "Analytics Engineering Toolkit"
+type: software
+authors:
+  - family-names: "Provencio"
+    given-names: "Eric"
+    affiliation: "AnalyticsEngineering.com"
+repository-code: "https://github.com/analyticsengineering/ae-toolkit"
+url: "https://www.analyticsengineering.com/toolkit"
+license: "MIT"
+version: "1.4.0"
+date-released: "2026-10-11"
+keywords:
+  - analytics engineering
+  - AI coding agents
+  - dbt
+  - SQL
+  - data quality
+  - data modeling

@@ -33,9 +33,10 @@ Read `.ae/project.yml` first and treat human edits as authoritative. If absent, 
 4. Describe keys by role and measures by unit, time anchor, aggregation behavior, filters, and known non-additivity. Explain meaningful nulls.
 5. Describe transformations only when they change interpretation. Do not narrate CTEs, casts, aliases, or obvious implementation.
 6. Reconcile contradictions explicitly. Never silently choose among different business definitions for the same metric.
-7. Place documentation according to the repository's model-level, grouped-YAML, or docs-block pattern.
+7. Place documentation according to the repository's model-level, grouped-YAML, or docs-block pattern. For every column, first look it up in `project.docs_blocks` from the inference; reference a matching block with `{{ doc('<name>') }}` rather than writing a new description, and add new shared columns as blocks when the project documents columns that way.
 8. Apply explicitly requested, reversible documentation edits to project-owned YAML or Markdown without asking for a second approval. Preview and ask before deleting or moving files, changing business meaning, or expanding beyond the requested models.
-9. If composing with `build-model`, return the documentation, evidence, target path, and any unresolved semantic gate; do not redo source setup, SQL construction, or model-test design.
+9. When the grain you document has no test (a `unique` key, or a combination test for a composite grain), add that test in the repository's pattern and list it: documentation that states a grain nothing checks is a claim, not a contract.
+10. If composing with `build-model`, return the documentation, evidence, target path, and any unresolved semantic gate; do not redo source setup, SQL construction, or model-test design.
 
 ## Evidence required
 
@@ -47,6 +48,7 @@ Cite the SQL expression or authoritative local requirement behind every material
 - Claiming uniqueness, freshness, additivity, or completeness without evidence.
 - Hiding grain, time anchors, exclusions, or null semantics that change interpretation.
 - Copying descriptions between models whose grain or filters differ.
+- Writing inline prose for a column the project already defines in a docs block.
 - Resolving contradictory metric definitions without stakeholder evidence.
 - Treating YAML formatting as documentation work when semantics are unchanged.
 - Changing shared business meaning or documentation outside the requested models without preview and approval.

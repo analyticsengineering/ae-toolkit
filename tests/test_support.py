@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -29,7 +30,9 @@ def load_module(relative_path: str, module_name: str | None = None) -> ModuleTyp
     return module
 
 
-def run_python(relative_path: str, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+def run_python(
+    relative_path: str, *args: str, stdin: str | None = None, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     """Invoke a plugin Python entry point with the active interpreter."""
     return subprocess.run(
         [sys.executable, str(PLUGIN_ROOT / relative_path), *args],
@@ -39,6 +42,7 @@ def run_python(relative_path: str, *args: str, stdin: str | None = None) -> subp
         encoding="utf-8",
         check=False,
         cwd=PLUGIN_ROOT,
+        env={**os.environ, **env} if env else None,
     )
 
 

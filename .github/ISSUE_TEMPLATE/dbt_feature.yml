@@ -1,0 +1,53 @@
+name: Unsupported dbt feature
+description: A dbt v1 or v2 feature, artifact, or command the toolkit misreads, ignores, or classifies wrongly.
+labels: [dbt-compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check docs/COMPATIBILITY.md first; it lists what is supported, partially supported, and not yet supported, and why.
+
+        Do not attach artifacts that contain credentials, row-level data, or compiled SQL you cannot share. A trimmed or synthetic artifact is enough.
+  - type: input
+    id: feature
+    attributes:
+      label: dbt feature
+      placeholder: "e.g. `dbt check` results, model-level static analysis overrides, a new run_results status"
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: dbt engine
+      options:
+        - dbt v1 (Core)
+        - dbt v2
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: dbt version
+      description: The output of `dbt --version`, without any paths you would rather not share.
+  - type: textarea
+    id: docs
+    attributes:
+      label: dbt documentation
+      description: A link to the dbt documentation that describes the feature. The toolkit follows documented behavior rather than reverse-engineered internals.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What the toolkit does today
+      description: For example, reports an artifact as missing, counts a reused result as a pass, or asks for approval on a local metadata command.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should do
+    validations:
+      required: true

@@ -499,13 +499,18 @@ class ArtifactProvenanceTests(unittest.TestCase):
             (target / "sources.json").write_text(
                 json.dumps({"metadata": {}, "results": []}), encoding="utf-8"
             )
-            freshness = interpreter._artifacts_from_project(str(root), "source_freshness")
-            build = interpreter._artifacts_from_project(str(root), "model_validation")
+            (target / "freshness.json").write_text(
+                json.dumps({"metadata": {}, "results": []}), encoding="utf-8"
+            )
+            freshness, _ = interpreter._artifacts_from_project(str(root), "source_freshness")
+            build, _ = interpreter._artifacts_from_project(str(root), "model_validation")
 
-        self.assertIsNone(freshness[0], "a freshness check must not read run_results.json")
-        self.assertIsNotNone(freshness[1])
-        self.assertIsNotNone(build[0])
-        self.assertIsNone(build[1], "a build must not read a leftover sources.json")
+        self.assertIsNone(freshness["run_results"], "a freshness check must not read run_results.json")
+        self.assertIsNotNone(freshness["sources"])
+        self.assertIsNone(freshness["freshness"], "source freshness must not read dbt v2's freshness.json")
+        self.assertIsNotNone(build["run_results"])
+        self.assertIsNone(build["sources"], "a build must not read a leftover sources.json")
+        self.assertIsNone(build["freshness"])
 
 
 def _sources(

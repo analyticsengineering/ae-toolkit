@@ -159,25 +159,79 @@ class CloudDataGateTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.cases = read_json(FIXTURES / "safety" / "cases.json")
 
-    def test_connected_content_requires_explicit_approval(self) -> None:
-        result = run_python(
-            "hooks/cloud_data_gate.py",
-            stdin=json.dumps(self.cases["cloud"]),
-        )
+    def gate(self, payload: dict) -> dict:
+        result = run_python("hooks/cloud_data_gate.py", stdin=json.dumps(payload))
         self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
+        return json.loads(result.stdout)
+
+    def test_dbt_warehouse_tools_require_explicit_approval(self) -> None:
+        payload = self.gate(self.cases["cloud"])
         self.assertEqual(payload["permission"], "ask")
-        self.assertEqual(payload["reason_code"], "connected-analysis-approval")
-        self.assertIn("$.query", payload["user_message"])
-        self.assertIn("No content is sent until you approve", payload["user_message"])
+        self.assertEqual(payload["reason_code"], "dbt-warehouse-approval")
+        self.assertIn("execute_sql", payload["user_message"])
+        self.assertIn("Nothing runs until you approve", payload["user_message"])
+
+    def test_every_dbt_tool_that_reaches_the_warehouse_is_held(self) -> None:
+        for server, tool in (
+            ("dbt", "build"),
+            ("dbt-mcp", "run"),
+            ("dbt_cloud", "show"),
+            ("dbt", "query_metrics"),
+            ("dbt", "text_to_sql"),
+            ("dbt", "trigger_job_run"),
+            ("dbt", "generate_staging_model"),
+        ):
+            with self.subTest(server=server, tool=tool):
+                payload = self.gate(
+                    {"mcp_server_name": server, "tool_name": tool, "tool_input": {}}
+                )
+                self.assertEqual(payload["permission"], "ask")
+
+    def test_host_prefixed_tool_names_and_dbt_hosts_are_recognised(self) -> None:
+        prefixed = {"tool_name": "mcp__dbt__build", "mcp_server_name": "dbt", "tool_input": {}}
+        by_host = {
+            "mcp_server_name": "warehouse-tools",
+            "mcp_server_url": "https://abc.us1.dbt.com/api/ai/v1/mcp/",
+            "tool_name": "execute_sql",
+            "tool_input": {},
+        }
+        by_launch = {
+            "mcp_server_name": "warehouse",
+            "command": "uvx dbt-mcp",
+            "tool_name": "build",
+            "tool_input": {},
+        }
+        for payload in (prefixed, by_host, by_launch):
+            with self.subTest(payload=payload["mcp_server_name"]):
+                self.assertEqual(self.gate(payload)["reason_code"], "dbt-warehouse-approval")
+
+    def test_dbt_metadata_reads_are_allowed(self) -> None:
+        for tool in ("get_model_details", "list_metrics", "get_model_parents", "parse"):
+            with self.subTest(tool=tool):
+                payload = self.gate({"mcp_server_name": "dbt", "tool_name": tool, "tool_input": {}})
+                self.assertEqual(payload["permission"], "allow")
+                self.assertEqual(payload["reason_code"], "dbt-metadata")
+
+    def test_an_unrecognised_dbt_tool_asks_rather_than_assuming_it_is_safe(self) -> None:
+        payload = self.gate({"mcp_server_name": "dbt", "tool_name": "materialize_everything", "tool_input": {}})
+        self.assertEqual(payload["permission"], "ask")
+        self.assertEqual(payload["reason_code"], "dbt-unknown-tool-approval")
+
+    def test_secrets_in_a_dbt_request_are_refused(self) -> None:
+        secret = "gh" + "p_" + ("C" * 32)
+        payload = self.gate(
+            {"mcp_server_name": "dbt", "tool_name": "execute_sql", "tool_input": {"sql": f"select '{secret}'"}}
+        )
+        self.assertEqual(payload["permission"], "deny")
+        self.assertEqual(payload["reason_code"], "potential-secret")
 
     def test_unrelated_identified_server_is_not_governed(self) -> None:
-        result = run_python(
-            "hooks/cloud_data_gate.py",
-            stdin=json.dumps(self.cases["unrelated_cloud"]),
-        )
-        payload = json.loads(result.stdout)
+        payload = self.gate(self.cases["unrelated_cloud"])
         self.assertEqual(payload["permission"], "allow")
+        self.assertEqual(payload["reason_code"], "unrelated-mcp-server")
+
+    def test_dbt_is_matched_as_a_word_not_a_substring(self) -> None:
+        payload = self.gate({"mcp_server_name": "mydbtools", "tool_name": "run", "tool_input": {}})
         self.assertEqual(payload["reason_code"], "unrelated-mcp-server")
 
     def test_secret_detection_recurses_without_network_access(self) -> None:
@@ -187,23 +241,10 @@ class CloudDataGateTests(unittest.TestCase):
         )
         self.assertEqual(path, "$.nested[0].access_token")
 
-    def test_server_spoofing_and_missing_identity_fail_closed(self) -> None:
-        spoofed = {
-            "mcp_server_name": "analytics-engineering",
-            "mcp_server_url": "https://example.invalid/mcp",
-            "tool_input": {},
-        }
-        for payload, reason in (
-            (spoofed, "server-url-mismatch"),
-            ({"tool_input": {}}, "missing-server-identity"),
-        ):
-            with self.subTest(reason=reason):
-                result = run_python(
-                    "hooks/cloud_data_gate.py", stdin=json.dumps(payload)
-                )
-                response = json.loads(result.stdout)
-                self.assertEqual(response["permission"], "deny")
-                self.assertEqual(response["reason_code"], reason)
+    def test_missing_server_identity_fails_closed(self) -> None:
+        response = self.gate({"tool_input": {}})
+        self.assertEqual(response["permission"], "deny")
+        self.assertEqual(response["reason_code"], "missing-server-identity")
 
     def test_string_tool_input_is_parsed_and_content_fields_are_named(self) -> None:
         parsed = cloud_data_gate.parse_tool_input('{"dataset": "orders"}')

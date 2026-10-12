@@ -1,0 +1,22 @@
+name: Workflow request
+description: An analytics-engineering task the toolkit should handle, or handle better.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: The task
+      description: What you were trying to get done, in the words you would use with a colleague.
+    validations:
+      required: true
+  - type: textarea
+    id: practice
+    attributes:
+      label: What good looks like
+      description: The professional practice the toolkit should follow, and the mistake it should avoid. General practice, not a fix for one repository.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today

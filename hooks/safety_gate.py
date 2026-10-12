@@ -36,6 +36,20 @@ DBT_EXECUTION = re.compile(
     re.IGNORECASE,
 )
 DBT_LOGIN = re.compile(r"\bdbt\b[^;&|]*?\blogin\b", re.IGNORECASE)
+DBT_PLATFORM_STATE = re.compile(r"\bdbt\b[^;&|]*?\bstate\s+explain\b", re.IGNORECASE)
+# `dbt show --info <view>` reads the generated Information Schema from local
+# files; `--inline` and `--select` on the same verb run SQL in the warehouse.
+# Only this exact shape is a local read, so any other flag falls back to review.
+SHOW_INFO_VALUE_FLAGS = {
+    "--info",
+    "--project-dir",
+    "--target-path",
+    "--info-schema-dir",
+    "--limit",
+    "--output",
+    "--log-level",
+}
+SHOW_INFO_SWITCHES = {"--quiet", "-q", "--no-write-json"}
 # dbt v2 installs as `dbt` and also answers to `dbtf` where v1 shares the PATH.
 DBT_PROGRAMS = {"dbt", "dbtf"}
 DBT_DEPENDENCIES = re.compile(r"\bdbt\b[^;&|]*?\bdeps\b", re.IGNORECASE)
@@ -727,7 +741,18 @@ def classify(command: str) -> dict[str, str]:
             "dbt-platform-login",
         )
 
-    if any(DBT_EXECUTION.search(segment) for segment in dbt_segments):
+    if any(DBT_PLATFORM_STATE.search(segment) for segment in dbt_segments):
+        return decision(
+            "ask",
+            "This command asks the dbt platform State service about this project's deployments.",
+            "Run it only when the user wants dbt platform consulted; it sends project identifiers off this machine.",
+            "dbt-platform-service",
+        )
+
+    if any(
+        DBT_EXECUTION.search(segment) and not _local_metadata_read(segment)
+        for segment in dbt_segments
+    ):
         return decision(
             "ask",
             "This dbt command may connect to or change a warehouse. Confirm the exact scope and a named local or development target.",
@@ -744,6 +769,31 @@ def classify(command: str) -> dict[str, str]:
         )
 
     return decision("allow", reason_code="no-risk-pattern")
+
+
+def _local_metadata_read(segment: str) -> bool:
+    """Whether a dbt command only reads the local Information Schema."""
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        return False
+    if len(tokens) < 3 or tokens[1].lower() != "show":
+        return False
+    has_info = False
+    index = 2
+    while index < len(tokens):
+        token = tokens[index]
+        name, _, inline_value = token.partition("=")
+        if name in SHOW_INFO_VALUE_FLAGS:
+            if not inline_value:
+                index += 1
+                if index >= len(tokens) or tokens[index].startswith("-"):
+                    return False
+            has_info = has_info or name == "--info"
+        elif token not in SHOW_INFO_SWITCHES:
+            return False
+        index += 1
+    return has_info
 
 
 def main(argv: list[str] | None = None) -> int:

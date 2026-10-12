@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest `1.2.x` release. Users should reproduce a report against the latest version before filing when practical.
+Security fixes are provided for the latest release and are not backported. Users should reproduce a report against the latest version before filing when practical.
 
 ## Report a vulnerability
 
 Do not open a public issue for an unpatched vulnerability or include secrets, credentials, exploit payloads, private repository content, learner submissions, or production data in a public report.
 
-Email **security@analyticsengineering.com** with:
+Email **eric@analyticsengineering.com** with:
 
 - a concise description and potential impact;
 - affected version, component, and environment;
@@ -25,9 +25,9 @@ Good-faith research that avoids privacy violations, service disruption, data des
 
 ## Security boundary
 
-Analytics Engineering Toolkit is a Cursor Plugin made of instructions, configuration, and deterministic safety hooks. It is not a sandbox. Cursor, the operating system, selected model provider, shell, database client, Git host, and optional MCP service each have separate trust and security boundaries.
+Analytics Engineering Toolkit is a Cursor Plugin made of instructions, configuration, and deterministic safety hooks. It is not a sandbox. Cursor, the operating system, selected model provider, shell, database client, Git host, and any MCP server you add each have separate trust and security boundaries.
 
-The remote URL `https://mcp.analyticsengineering.com/mcp` is optional and its implementation is not included in this repository. Do not infer server security, availability, authentication, or data handling from the local configuration alone.
+The toolkit ships no server and configures no MCP server. Nothing in it opens a network connection.
 
 ## Database safety posture
 
@@ -40,7 +40,8 @@ V1 is analysis-first and does not support production database mutation:
 - recognized database-client `SELECT` and `EXPLAIN` operations require explicit approval and confirmation that the target is an approved local or development environment;
 - dbt commands that may execute warehouse queries require explicit approval and target review, whichever name launches dbt (`dbt`, `dbtf`, `python -m dbt`) and whatever runner or environment assignment precedes it;
 - generated SQL is a proposal for human review, never authorization to execute;
-- course or connected mode does not weaken these restrictions.
+- dbt MCP tools that execute against the warehouse or change state on the dbt platform are held for approval the same way, and an unrecognised dbt MCP tool is held rather than assumed safe;
+- Learn, Assessment, and connected work do not weaken these restrictions.
 
 The shell safety gate also denies selected destructive filesystem and Git operations. Pattern-based classification is defense in depth: commands can be encoded, wrapped, aliased, or otherwise evade or falsely trigger a pattern. A command reached through `make`, a script file, or a shell alias is opaque to it. Always inspect commands, use least-privilege credentials, restrict network access, and rely on warehouse permissions and environment separation as primary controls.
 
@@ -48,7 +49,7 @@ The shell safety gate also denies selected destructive filesystem and Git operat
 
 MCP actions and data transfer must be previewed and explicitly approved. Installing the plugin, enabling an MCP server, selecting Assessment mode, or opening `.ae/exercise.json` is not approval. Scope approval to one destination, operation, and payload; ask again when any of those changes.
 
-If the remote endpoint is missing, unreachable, or does not expose a requested capability, fail closed for the connected action and continue only with clearly labeled local guidance. Never fabricate a server response, grade, entitlement decision, or submission receipt.
+If a service you configured is missing, unreachable, or does not expose a requested capability, fail closed for that action and continue only with clearly labeled local guidance. Never fabricate a server response, and never present a local self-check as an official grade or submission receipt.
 
 ## Credentials and sensitive data
 

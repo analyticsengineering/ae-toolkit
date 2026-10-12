@@ -64,7 +64,7 @@ class GeneratedTargetTests(unittest.TestCase):
             self.assertTrue(any("stale file" in p for p in problems), problems)
 
     def test_every_authored_skill_reaches_every_target(self) -> None:
-        expected = {path.parent.name for path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md")}
+        expected = {path.parent.name for path in (PLUGIN_ROOT / "src" / "skills").glob("*/SKILL.md")}
         for name, target in TARGETS.items():
             shipped = {p.parent.name for p in (DIST / name / target.skills_dir).glob("*/SKILL.md")}
             self.assertTrue(expected <= shipped, f"{name} is missing skills: {sorted(expected - shipped)}")
@@ -216,6 +216,80 @@ class GeneratedTargetTests(unittest.TestCase):
             self.assertIn(f"--host {name}", serialized)
 
 
+class PortableSkillTests(unittest.TestCase):
+    """Skills an installer copies one directory at a time must still work.
+
+    `npx skills add` copies a skill's own directory and nothing beside it, so any
+    path into a shared tree is dead on arrival. Every check here is about a skill
+    standing alone.
+    """
+
+    PORTABLE = build_targets.PORTABLE_ROOT
+    PATH = re.compile(r"<skill-dir>/((?:scripts|references)/[A-Za-z0-9_.-]+)")
+
+    def skills(self) -> list[Path]:
+        skills = sorted(self.PORTABLE.glob("*/SKILL.md"))
+        self.assertTrue(skills, "the portable target shipped no skills")
+        return skills
+
+    def test_committed_portable_skills_match_a_fresh_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fresh = Path(tmp) / "skills"
+            build_targets.build_portable(fresh)
+            self.assertEqual([], build_targets.differences(fresh, self.PORTABLE))
+
+    def test_every_authored_skill_is_portable(self) -> None:
+        authored = {path.parent.name for path in (PLUGIN_ROOT / "src" / "skills").glob("*/SKILL.md")}
+        self.assertEqual(authored, {path.parent.name for path in self.skills()})
+
+    def test_no_portable_skill_names_a_path_outside_itself(self) -> None:
+        for skill in self.skills():
+            root = skill.parent
+            for doc in root.rglob("*.md"):
+                text = doc.read_text(encoding="utf-8")
+                with self.subTest(file=str(doc.relative_to(self.PORTABLE))):
+                    self.assertNotIn("CURSOR_PLUGIN_ROOT", text)
+                    for relative in self.PATH.findall(text):
+                        self.assertTrue((root / relative).is_file(), f"{relative} is not bundled")
+
+    def test_bundled_scripts_carry_every_sibling_they_import(self) -> None:
+        known = {path.stem for path in (PLUGIN_ROOT / "scripts").glob("*.py")}
+        for skill in self.skills():
+            bundled = {path.stem for path in (skill.parent / "scripts").glob("*.py")}
+            for script in (skill.parent / "scripts").glob("*.py"):
+                imports = set(re.findall(r"^\s*(?:import|from)\s+([A-Za-z0-9_]+)", script.read_text(encoding="utf-8"), re.M))
+                with self.subTest(skill=skill.parent.name, script=script.name):
+                    self.assertEqual(set(), (imports & known) - bundled)
+
+    def test_every_portable_skill_carries_the_rules_and_says_it_is_ungated(self) -> None:
+        for skill in self.skills():
+            text = skill.read_text(encoding="utf-8")
+            with self.subTest(skill=skill.parent.name):
+                self.assertTrue((skill.parent / "references" / "operating-rules.md").is_file())
+                self.assertIn("no safety hooks", text)
+                meta, _ = build_targets.split_frontmatter(text)
+                self.assertEqual(meta.get("name"), skill.parent.name)
+                self.assertLessEqual(len(meta.get("description", "")), 1024)
+
+    def test_a_copied_skill_runs_its_scripts_away_from_the_repository(self) -> None:
+        import subprocess
+        import sys
+
+        fixture = PLUGIN_ROOT / "tests" / "fixtures" / "dbt" / "ambiguous_adapter"
+        with tempfile.TemporaryDirectory() as tmp:
+            installed = Path(tmp) / "validate-dbt"
+            shutil.copytree(self.PORTABLE / "validate-dbt", installed)
+            result = subprocess.run(
+                [sys.executable, str(installed / "scripts" / "plan_dbt_validation.py"), str(fixture), "--intent", "static"],
+                capture_output=True,
+                text=True,
+                cwd=tmp,
+                timeout=60,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("validation_steps", json.loads(result.stdout))
+
+
 class HostContractTests(unittest.TestCase):
     """Each host phrases a refusal differently; all three must still refuse."""
 
@@ -271,7 +345,7 @@ class HostContractTests(unittest.TestCase):
         self.assertEqual("deny", self.decision_for("vscode", {"toolName": "runTerminalCommand"}))
 
     def test_the_shell_gate_stands_aside_for_mcp_traffic(self) -> None:
-        payload = {"toolName": "mcp__analytics-engineering__grade", "toolInput": {}}
+        payload = {"toolName": "mcp__dbt__build", "toolInput": {}}
         self.assertEqual("allow", self.decision_for("vscode", payload))
 
 
@@ -306,16 +380,15 @@ class CloudGateHostContractTests(unittest.TestCase):
         return reply["permission"]
 
     def test_every_outcome_survives_translation_to_every_host(self) -> None:
-        connected = {
-            "tool_name": "mcp__analytics-engineering__analyze",
-            "mcp_server_name": "analytics-engineering",
-            "tool_input": {"query": "select 1"},
+        warehouse = {
+            "tool_name": "mcp__dbt__execute_sql",
+            "mcp_server_name": "dbt",
+            "tool_input": {"sql": "select 1"},
         }
-        spoofed = {
-            "tool_name": "mcp__analytics-engineering__analyze",
-            "mcp_server_name": "analytics-engineering",
-            "mcp_server_url": "https://example.invalid/mcp",
-            "tool_input": {},
+        leaked = {
+            "tool_name": "mcp__dbt__execute_sql",
+            "mcp_server_name": "dbt",
+            "tool_input": {"sql": "select '" + "gh" + "p_" + ("C" * 32) + "'"},
         }
         unrelated = {
             "tool_name": "mcp__other__lookup",
@@ -323,24 +396,24 @@ class CloudGateHostContractTests(unittest.TestCase):
             "tool_input": {},
         }
         for host in build_targets.TARGETS:
-            for payload, expected in ((connected, "ask"), (spoofed, "deny"), (unrelated, "allow")):
+            for payload, expected in ((warehouse, "ask"), (leaked, "deny"), (unrelated, "allow")):
                 with self.subTest(host=host, expected=expected):
                     reply = self.reply_for(host, payload)
                     self.assertEqual(expected, self.decision_of(host, reply))
 
     def test_the_reason_reaches_the_user_on_every_host(self) -> None:
-        """An `ask` without its payload preview is consent without disclosure."""
+        """An `ask` that does not say what will run is consent without disclosure."""
         payload = {
-            "tool_name": "mcp__analytics-engineering__analyze",
-            "mcp_server_name": "analytics-engineering",
-            "tool_input": {"query": "select 1"},
+            "tool_name": "mcp__dbt__execute_sql",
+            "mcp_server_name": "dbt",
+            "tool_input": {"sql": "select 1"},
         }
         for host in build_targets.TARGETS:
             with self.subTest(host=host):
                 reply = self.reply_for(host, payload)
                 serialized = json.dumps(reply)
-                self.assertIn("No content is sent until you approve", serialized)
-                self.assertIn("$.query", serialized)
+                self.assertIn("Nothing runs until you approve", serialized)
+                self.assertIn("execute_sql", serialized)
 
     def test_the_cloud_gate_stands_aside_for_shell_traffic(self) -> None:
         payload = {"tool_name": "run_command", "tool_input": {"command": "ls"}}

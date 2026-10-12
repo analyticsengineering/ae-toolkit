@@ -27,6 +27,7 @@ from typing import Any, Iterable, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import artifact_inventory  # noqa: E402
+import dbt_capabilities  # noqa: E402
 import git_scope  # noqa: E402
 import infer_conventions  # noqa: E402
 import inspect_dbt  # noqa: E402
@@ -1451,6 +1452,9 @@ def build_steps(
             )
 
     interpreter = str(Path(__file__).resolve().parent / "interpret_dbt_results.py")
+    # A project that turns JSON artifacts off would leave every verification
+    # step reading an earlier run's files, so each step asks for them back.
+    write_json = dbt_capabilities.json_artifacts_written(context).value is False
     for step in steps:
         if not step.executes_warehouse:
             continue
@@ -1468,6 +1472,7 @@ def build_steps(
             "--select",
             *step.selectors,
             *(("--target", str(target)) if target else ()),
+            *(("--write-json",) if write_json else ()),
             "--log-format-file",
             "json",
             "--log-path",
@@ -1718,6 +1723,14 @@ def plan_validation(
         )
     if context.discovery_note:
         warnings.append(context.discovery_note)
+    json_artifacts = dbt_capabilities.json_artifacts_written(context)
+    if json_artifacts.value is False:
+        warnings.append(
+            f"JSON artifacts are turned off ({json_artifacts.evidence}), so each warehouse "
+            "step adds `--write-json` and its result can be read back. Without it the "
+            "outcome is only in the command's log, and the artifacts already on disk "
+            "describe an earlier run."
+        )
 
     # Proving an artifact came from the command that just ran says nothing about
     # whether the command could satisfy the change. `dbt test` on an edited model

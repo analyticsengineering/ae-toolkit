@@ -32,7 +32,7 @@ Read `.ae/project.yml` first. Human-edited values are authoritative. If it is ab
 3. Search for duplicate logical or physical relations before proposing a new source. Reuse an existing declaration when it names the same relation.
 4. Derive source, table, and column names from the request and repository evidence. Do not infer columns from intuition.
 5. Add descriptions, freshness, `loaded_at_field`, quoting, or tests only when local configuration, contracts, or neighboring sources justify them. Keep business promises such as freshness explicitly sourced.
-6. Validate every proposed `source()` call against the declared source and table names and identify models affected by a rename or replacement.
+6. Validate every proposed `source()` call against the declared source and table names and identify models affected by a rename or replacement. When the loader changes what a column means (gross instead of net, a different unit, a different timezone), update the staging model that reads it in the same change so its output keeps its documented meaning; a source-only edit that leaves a staging column mislabelled is incomplete.
 7. If staging models are requested, compose with `build-model` and hand off the resolved `source()` names, relation grain, and evidenced columns; do not make the user start another workflow.
 8. Apply explicitly requested, reversible source-YAML and staging-reference edits without asking for a second approval. Preview and ask before a rename, deletion, contract change, or broader edit outside the requested scope.
 9. If composing with `build-model`, return control with the resolved `source()` name, declaration path, evidence, and any risk gate; do not redo model SQL, documentation, or model-test work.
@@ -48,6 +48,7 @@ Cite the local file or user-provided requirement establishing each physical rela
 - Adding freshness without a supported load timestamp or availability promise.
 - Treating model tests or descriptions as source setup merely because they share YAML.
 - Renaming a source without tracing downstream `source()` calls.
+- Recording that a loader now sends a gross, rescaled, or re-zoned value while the staging model keeps selecting it under its old meaning.
 - Editing outside the requested source scope or changing a contract without preview and approval.
 - Running dbt or querying a warehouse to compensate for missing local evidence.
 

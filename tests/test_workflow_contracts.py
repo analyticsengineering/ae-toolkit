@@ -7,7 +7,7 @@ from test_support import PLUGIN_ROOT
 
 class DayToDayWorkflowContractTests(unittest.TestCase):
     def skill(self, name: str) -> str:
-        return (PLUGIN_ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8").lower()
+        return (PLUGIN_ROOT / "src" / "skills" / name / "SKILL.md").read_text(encoding="utf-8").lower()
 
     def assert_terms(self, skill: str, *terms: str) -> None:
         text = self.skill(skill)

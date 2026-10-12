@@ -33,6 +33,7 @@ Default silently to Work mode and deliver the chain and its risks. In Learn mode
 5. Reconstruct the business definition from the accumulated expressions and filters, including every predicate that narrows the population, not only the arithmetic.
 6. Run the semantic checks below across the whole chain, not hop by hop, because these defects appear only when two hops are compared.
 7. Separate what the files establish from what only a warehouse could confirm, and label the second group plainly.
+8. On dbt v2, column lineage from `dbt show --info column_lineage` can corroborate a hop, but only output the user supplies or that is already in the session counts. It covers only models dbt analyzed in strict mode, and a model configured `strict` may still have fallen back to baseline, so a column it does not list is unknown rather than unused. Where its edges and the SQL disagree, report both.
 
 ## Semantic checks
 
@@ -60,7 +61,7 @@ Every hop cites a file and the expression at that hop. The consumer count states
 
 ## Output contract
 
-Return `# Lineage Trace` with: What it measures; Definition site; Calculation chain; Upstream sources; Downstream consumers; Semantic risks; What the files cannot confirm.
+Return `# Lineage Trace` with: What it measures; Definition site; Calculation chain; Upstream sources; Downstream consumers; Semantic risks; What the files cannot confirm. When Downstream consumers names three or more, follow the list with a blast-radius diagram as described in `.agents/ae-toolkit/references/diagrams.md`.
 
 State the business definition first, in one or two sentences a stakeholder would understand, before any SQL appears.
 

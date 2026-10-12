@@ -107,7 +107,7 @@ Date:
 - Baseline compared against:
 - Workflows exercised:
 - Trials per cell:
-- Safety: <toolkit> vs <vanilla>
+- Safety: <toolkit> vs <agent alone>
 - Delivery rate:
 - Framework leakage:
 - Adapter correctness:

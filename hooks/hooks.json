@@ -8,6 +8,20 @@
         "failClosed": true
       }
     ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/hooks/published_model_guard.py\"",
+        "timeout": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/hooks/published_model_guard.py\"",
+        "matcher": "Write|Delete|Shell|StrReplace|Edit|MultiEdit",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ],
     "beforeMCPExecution": [
       {
         "command": "python3 \"${CURSOR_PLUGIN_ROOT}/hooks/cloud_data_gate.py\"",

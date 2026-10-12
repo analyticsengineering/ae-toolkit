@@ -11,14 +11,19 @@ permissions:
 
 jobs:
   test:
-    name: Plugin contract and safety tests
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.9', '3.13']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python }}
 
       # The plugin ships standard-library Python only, so there is nothing to install.
       - name: Run test suite
@@ -26,10 +31,28 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 tests/run_tests.py
 
-      # The VS Code and Antigravity layouts are generated, not authored. A source
-      # change that is not rebuilt would leave those hosts running older rules
-      # while still appearing to be governed by the current ones.
+      # The generated layouts are not authored. A source change that is not
+      # rebuilt would leave those hosts running older rules while still appearing
+      # to be governed by the current ones.
       - name: Verify generated targets match the plugin source
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 scripts/build_targets.py --check
+
+  windows:
+    # Not yet a supported platform: this job reports, and does not gate merges,
+    # until it has passed and the hooks have been checked in a Windows editor.
+    name: Tests (windows-latest, Python 3.13, experimental)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Run test suite
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python tests/run_tests.py

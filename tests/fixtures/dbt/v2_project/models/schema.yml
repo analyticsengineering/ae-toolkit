@@ -1,0 +1,13 @@
+version: 2
+sources:
+  - name: shop
+    tables:
+      - name: orders
+models:
+  - name: stg_orders
+    description: One row per order.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+  - name: fct_orders
+    description: Orders fact.
